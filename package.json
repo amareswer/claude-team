@@ -1,0 +1,33 @@
+{
+  "name": "claude-team",
+  "version": "1.0.0",
+  "description": "Multi-agent coordination CLI for Claude Code",
+  "type": "module",
+  "bin": {
+    "claude-team": "./bin/claude-team.js"
+  },
+  "main": "lib/cli.js",
+  "scripts": {
+    "start": "node bin/claude-team.js",
+    "dev": "node bin/claude-team.js"
+  },
+  "keywords": [
+    "claude",
+    "ai",
+    "agents",
+    "cli",
+    "coordination"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "boxen": "^8.0.1",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "figlet": "^1.8.0",
+    "fs-extra": "^11.3.0",
+    "gradient-string": "^3.0.0",
+    "inquirer": "^14.0.2",
+    "ora": "^8.2.0"
+  }
+}
