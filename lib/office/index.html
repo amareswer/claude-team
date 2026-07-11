@@ -285,6 +285,7 @@
     <div class="spacer"></div>
     <div class="chip" id="h-tasks">📋 —</div>
     <div class="chip" id="h-master">📄 MASTER —</div>
+    <div class="chip" id="h-tokens" style="display:none">🪙 —</div>
     <div class="chip alert" id="h-questions" style="display:none" onclick="openBossDrawer()">❓ —</div>
   </header>
   <div class="offline" id="offline">⚠️ Lost connection to claude-team office server — is it still running?</div>
@@ -332,6 +333,12 @@ const MODEL_OPTIONS = [
   { value: 'default', label: 'Default', desc: 'let Claude Code decide' },
 ];
 const MODEL_LABEL = Object.fromEntries(MODEL_OPTIONS.map(m => [m.value, m.label]));
+function formatTokens(n) {
+  if (n == null) return '—';
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
+  return String(n);
+}
 function modelOptionsHtml(selected) {
   return MODEL_OPTIONS.map(o =>
     `<option value="${o.value}" ${o.value === selected ? 'selected' : ''}>${esc(o.label)} — ${esc(o.desc)}</option>`
@@ -411,6 +418,12 @@ function render() {
   document.getElementById('h-tasks').textContent = `📋 ${t.done}/${t.total} done · ${t.inProgress} active · ${t.queued} queued`;
   const mPct = Math.round((state.masterDoc.tokens / state.masterDoc.budget) * 100);
   document.getElementById('h-master').textContent = `📄 MASTER ${mPct}%`;
+  const tokChip = document.getElementById('h-tokens');
+  if (state.totalTeamTokens > 0) {
+    tokChip.style.display = '';
+    tokChip.textContent = `🪙 ${formatTokens(state.totalTeamTokens)} tokens used`;
+    tokChip.title = 'Real usage from launched agents\' session transcripts, this office run only';
+  } else tokChip.style.display = 'none';
   const qChip = document.getElementById('h-questions');
   if (state.openQuestions.length > 0) {
     qChip.style.display = '';
@@ -461,6 +474,15 @@ function syncDrawer() {
   if (sb) sb.innerHTML = statusHtml(a);
 }
 
+function tokenUsageHtml(u) {
+  if (!u) return '';
+  if (u.total > 0) {
+    return `<br>🪙 Tokens used: ${formatTokens(u.total)} <span style="color:var(--dim)">(in ${formatTokens(u.inputTokens)} · out ${formatTokens(u.outputTokens)} · cache write ${formatTokens(u.cacheCreationTokens)} · cache read ${formatTokens(u.cacheReadTokens)})</span>`;
+  }
+  if (u.transcriptGaveUp) return `<br>🪙 Tokens used: unavailable <span style="color:var(--dim)">(couldn't find this session's transcript)</span>`;
+  return `<br>🪙 Tokens used: detecting session…`;
+}
+
 function statusHtml(a) {
   const docPct = Math.round((a.docTokens / a.docBudget) * 100);
   return `
@@ -469,7 +491,8 @@ function statusHtml(a) {
     ${a.currentPhase ? `<br>Phase: ${esc(a.currentPhase)}` : ''}
     ${a.blockedReason ? `<br>🚧 ${esc(a.blockedReason)}` : ''}
     <br>Model: ${MODEL_LABEL[a.model] || esc(a.model)}
-    <br>Context used: ${a.contextUsedPercent || 0}% · Memory doc: ${docPct}% of ${a.docBudget}t · Inbox: ${a.inboxCount}
+    <br>Context used: ${a.contextUsedPercent || 0}% (self-reported) · Memory doc: ${docPct}% of ${a.docBudget}t · Inbox: ${a.inboxCount}
+    ${tokenUsageHtml(a.tokenUsage)}
     ${a.session === 'live' ? `<br>Auto-check: ${a.autoLoop ? `ON — nudged every ~${a.pollIntervalSeconds}s while idle` : 'OFF'}` : ''}
     ${a.lastUpdated ? `<br>Last update: ${new Date(a.lastUpdated).toLocaleString()}` : ''}`;
 }

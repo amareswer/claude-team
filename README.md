@@ -5,17 +5,36 @@ Build a team of Claude Code instances that collaborate on any project — techni
 
 ---
 
-## Install
+## Install — project-local, not global
+
+claude-team is **not** installed as a global npm command — nothing gets added to your system PATH or global npm state. Every project that wants a team runs it locally, scoped to just that project folder.
+
+**Option A — zero install, works for any project (any language, not just Node):**
 
 ```bash
-# From the project folder:
-npm install -g .
+cd your-project
+node /path/to/claude-team/bin/claude-team.js init
+```
 
-# Or run directly without installing:
+Every command works the same way — swap `init` for `office`, `status`, `add`, `start`, `archive`. If you use this a lot, add a shell alias in your `~/.zshrc` / `~/.bashrc` (this is a plain shell alias, not an npm install — it still runs the same local script):
+
+```bash
+alias claude-team='node /path/to/claude-team/bin/claude-team.js'
+```
+
+**Option B — local devDependency, for target projects that are already Node projects:**
+
+```bash
+cd your-project
+npm install --save-dev /path/to/claude-team
 npx claude-team init
 ```
 
-**Requirements**: Node.js 18+ and Claude Code (`claude` CLI) installed. `claude-team office`'s launch/hire features use `node-pty` (a native module, built automatically on install); if it can't build on your machine the office still runs, just in view-only mode.
+This records claude-team in *that project's* `package.json`/`node_modules` only — nothing global, nothing shared across projects. `npx` finds the locally-installed binary automatically.
+
+Replace `/path/to/claude-team` with wherever you cloned this repo, e.g. `/Users/nishita/Desktop/Amaresh/projects/claude-team`.
+
+**Requirements**: Node.js 18+ and Claude Code (`claude` CLI) installed. `claude-team office`'s launch/hire features use `node-pty` (a native module, built automatically the first time you run `npm install` inside the claude-team repo itself); if it can't build on your machine the office still runs, just in view-only mode.
 
 ---
 
@@ -28,6 +47,8 @@ claude-team start      # 🚀 Exact launch command for every agent
 claude-team status     # 📊 Terminal view: agents, token usage, doc health
 claude-team office     # 🏢 Visual office view in your browser (live)
 ```
+
+(`claude-team` above stands for whichever invocation you set up — `npx claude-team`, the alias, or the full `node /path/to/.../bin/claude-team.js`.)
 
 Then open one terminal per agent, run `claude` in each, and paste the prompt `claude-team start` gives you. That's the whole loop.
 
@@ -185,11 +206,15 @@ All inboxes share the same shape — tasks go in `tasks`, everything else (resea
 **Hire from the office:**
 - The dashed **➕ Hire** desk opens a form (name, role, responsibilities, model). Hiring generates the agent's instruction file, memory doc, and coordination files — same as `claude-team add` — and the new character walks in, ready to launch with the model you picked.
 
+**Real token usage, not a guess:** every launched agent's drawer shows a live "🪙 Tokens used" line — exact `input`/`output`/`cache write`/`cache read` counts, not the self-reported `contextUsedPercent` (which is just the agent's own estimate of how full its context window is; the two measure different things and are both shown). The header also totals it across the whole team for the current office run. This works by correlating the agent's session to the transcript file Claude Code writes for it under `~/.claude/projects/`, so it only applies to agents launched from the office — one launched in a plain terminal has no such correlation and won't show a token count. If the office can't find the transcript within ~20s (rare), the drawer says so instead of showing a wrong number.
+
 **Notes:**
 - The server binds to `localhost` only (`http://localhost:4753`, change with `--port`). Never expose it — it can spawn processes.
 - The terminal view uses xterm.js from a CDN, so it needs internet; everything else works offline.
 - Launching requires `node-pty` (installed automatically). If it can't build on your machine, the office falls back to view-only mode and tells you.
 - Each launched agent is a full Claude Code session on your Claude subscription — launch what you need, not the whole roster at once.
+- **First launch in a brand-new project directory**: Claude Code shows a one-time "do you trust this folder?" prompt before it does anything. The office can't detect or answer this for you yet (its exact on-screen text is rendered with per-word cursor-positioning codes that don't survive a simple text match) — if a freshly-launched agent looks stuck at "idle" and never does anything, open its terminal in the drawer and check.
+- Token totals reset when you restart the office — they're not persisted across runs.
 
 ---
 
@@ -266,7 +291,7 @@ You can rename or replace any suggestion during the wizard, or pick "Custom" and
 
 ## Reusable Across Projects
 
-This tool is global — run `claude-team init` in any project's root and it generates a fresh team tailored to that project. Nothing is hard-coded. Re-running init on an existing team asks for confirmation before overwriting anything.
+One local clone of claude-team works against any number of projects — run it (via whichever invocation from Install above) in any project's root and it generates a fresh team tailored to that project, with no shared or global state between projects. Nothing is hard-coded. Re-running init on an existing team asks for confirmation before overwriting anything.
 
 ---
 
