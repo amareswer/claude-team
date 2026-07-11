@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>claude-team office</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --wall: #e8e2d6;
+    --floor-a: #c9a87c;
+    --floor-b: #bf9e73;
+    --desk: #8b6b4a;
+    --desk-dark: #6f5439;
+    --ink: #2d2a26;
+    --card: #fffdf8;
+    --green: #3d9a50;
+    --yellow: #d9a421;
+    --red: #cc4433;
+    --blue: #3a7bd5;
+    --dim: #8a8478;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--wall);
+    color: var(--ink);
+    min-height: 100vh;
+  }
+
+  /* ── Header ─────────────────────────────────────────── */
+  header {
+    background: linear-gradient(180deg, #4a4238, #3a342c);
+    color: #f5efe4;
+    padding: 14px 28px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    box-shadow: 0 2px 10px rgba(0,0,0,.25);
+  }
+  header h1 { font-size: 18px; font-weight: 700; }
+  header .goal { font-size: 13px; opacity: .75; max-width: 420px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header .spacer { flex: 1; }
+  .chip {
+    background: rgba(255,255,255,.12);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .chip.alert { background: #cc4433; animation: pulse 1.6s infinite; cursor: pointer; }
+  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+  .offline {
+    background: #cc4433; color: #fff; text-align: center;
+    padding: 6px; font-size: 13px; font-weight: 600; display: none;
+  }
+
+  /* ── Office floor ───────────────────────────────────── */
+  .office { max-width: 1200px; margin: 0 auto; padding: 24px 28px 80px; }
+  .room {
+    background: repeating-linear-gradient(90deg, var(--floor-a) 0 90px, var(--floor-b) 90px 180px);
+    border: 6px solid #7a6248;
+    border-radius: 14px;
+    padding: 26px 22px 22px;
+    margin-bottom: 26px;
+    box-shadow: inset 0 8px 24px rgba(0,0,0,.18), 0 4px 14px rgba(0,0,0,.12);
+    position: relative;
+  }
+  .room-label {
+    position: absolute;
+    top: -14px; left: 22px;
+    background: #4a4238; color: #f5efe4;
+    font-size: 12px; font-weight: 700;
+    padding: 4px 14px; border-radius: 8px;
+    letter-spacing: .5px;
+  }
+  .desks { display: flex; flex-wrap: wrap; gap: 22px; justify-content: center; }
+
+  /* ── Desk ───────────────────────────────────────────── */
+  .desk {
+    width: 172px;
+    cursor: pointer;
+    text-align: center;
+    position: relative;
+    padding-top: 56px;
+    transition: transform .15s;
+  }
+  .desk:hover { transform: translateY(-3px); }
+  .desk.arrive .person { animation: walkin .8s ease-out; }
+  @keyframes walkin {
+    from { transform: translateX(-220%) ; opacity: 0; }
+    to   { transform: translateX(-50%); opacity: 1; }
+  }
+
+  .person {
+    font-size: 40px;
+    line-height: 1;
+    position: absolute;
+    top: 6px; left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    filter: drop-shadow(0 3px 3px rgba(0,0,0,.25));
+  }
+  .desk.working .person { animation: typing .5s infinite alternate; }
+  @keyframes typing { from { transform: translateX(-50%) translateY(0); } to { transform: translateX(-50%) translateY(-4px); } }
+  .desk.blocked .person, .desk.paused .person { animation: shake 2.4s infinite; }
+  @keyframes shake { 0%,90%,100% { transform: translateX(-50%); } 93% { transform: translateX(-56%); } 96% { transform: translateX(-44%); } }
+
+  .bubble {
+    position: absolute;
+    top: -26px; left: 50%;
+    transform: translateX(-50%);
+    background: var(--card);
+    border-radius: 12px;
+    padding: 3px 10px;
+    font-size: 13px;
+    box-shadow: 0 2px 6px rgba(0,0,0,.2);
+    white-space: nowrap;
+    z-index: 3;
+  }
+  .bubble::after {
+    content: ""; position: absolute; bottom: -5px; left: 50%; transform: translateX(-50%);
+    border: 5px solid transparent; border-top-color: var(--card); border-bottom: none;
+  }
+  .bubble.red { background: #ffe3de; }
+  .bubble.red::after { border-top-color: #ffe3de; }
+  .desk.idle .bubble { animation: floaty 2.5s ease-in-out infinite; }
+  @keyframes floaty { 0%,100% { transform: translateX(-50%) translateY(0); } 50% { transform: translateX(-50%) translateY(-4px); } }
+
+  .desk-top {
+    background: linear-gradient(180deg, var(--desk), var(--desk-dark));
+    border-radius: 8px 8px 4px 4px;
+    height: 46px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+    box-shadow: 0 4px 8px rgba(0,0,0,.28);
+    position: relative;
+    z-index: 1;
+  }
+  .live-tag {
+    position: absolute; top: -8px; right: -6px;
+    background: var(--green); color: #fff;
+    font-size: 9px; font-weight: 800; letter-spacing: .5px;
+    padding: 2px 7px; border-radius: 8px;
+    box-shadow: 0 0 8px rgba(61,154,80,.8);
+    z-index: 4;
+  }
+  .nameplate {
+    background: var(--card);
+    margin: 6px auto 0;
+    border-radius: 6px;
+    padding: 5px 8px 6px;
+    box-shadow: 0 2px 5px rgba(0,0,0,.18);
+  }
+  .nameplate .name { font-weight: 700; font-size: 13px; }
+  .nameplate .role { font-size: 11px; color: var(--dim); margin-top: 1px; }
+  .nameplate .modeltag { font-size: 9.5px; color: #a08c5a; font-weight: 700; letter-spacing: .3px; margin-top: 1px; text-transform: uppercase; }
+  .statusline { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 4px; font-size: 11px; font-weight: 600; }
+  .led { width: 8px; height: 8px; border-radius: 50%; }
+  .led.working { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .led.idle { background: #b8b2a6; }
+  .led.blocked, .led.paused { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  .led.review_needed { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+  .led.done { background: var(--blue); }
+  .led.unknown { background: #b8b2a6; }
+  .ctxbar { height: 5px; background: #e5dfd2; border-radius: 3px; margin-top: 5px; overflow: hidden; }
+  .ctxbar > div { height: 100%; border-radius: 3px; background: var(--green); transition: width .6s; }
+  .ctxbar > div.warn { background: var(--yellow); }
+  .ctxbar > div.hot { background: var(--red); }
+  .tasktag {
+    margin-top: 5px; font-size: 10.5px; color: var(--dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* Boss + hire desks */
+  .desk.boss .desk-top { background: linear-gradient(180deg, #5c4a6e, #46375a); }
+  .desk.hire .desk-top {
+    background: none;
+    border: 2px dashed #7a6248;
+    color: #7a6248;
+    box-shadow: none;
+  }
+  .desk.hire .nameplate { opacity: .8; }
+  .badge {
+    position: absolute; top: 42px; right: 18px;
+    background: var(--red); color: #fff;
+    border-radius: 50%; width: 22px; height: 22px;
+    font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 4; box-shadow: 0 2px 5px rgba(0,0,0,.3);
+  }
+
+  /* ── Activity feed ──────────────────────────────────── */
+  .feed {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 16px 20px;
+    box-shadow: 0 3px 10px rgba(0,0,0,.1);
+  }
+  .feed h3 { font-size: 13px; letter-spacing: .5px; color: var(--dim); margin-bottom: 10px; }
+  .feed .item { font-size: 13px; padding: 4px 0; border-bottom: 1px dashed #eee6d8; }
+  .feed .item:last-child { border-bottom: none; }
+  .feed .who { font-weight: 700; color: #6a5a8a; }
+  .feed .empty { color: var(--dim); font-size: 13px; }
+
+  /* ── Drawer ─────────────────────────────────────────── */
+  .drawer {
+    position: fixed; top: 0; right: -800px;
+    width: 380px; max-width: 95vw; height: 100vh;
+    background: var(--card);
+    box-shadow: -6px 0 24px rgba(0,0,0,.22);
+    transition: right .25s ease, width .25s ease;
+    z-index: 100;
+    padding: 24px;
+    overflow-y: auto;
+    display: flex; flex-direction: column;
+  }
+  .drawer.open { right: 0; }
+  .drawer.wide { width: 760px; }
+  .drawer .close {
+    position: sticky; top: -12px; align-self: flex-end;
+    margin: -12px -12px 0 0; z-index: 5;
+    border: none; background: var(--card); border-radius: 50%;
+    width: 32px; height: 32px;
+    font-size: 18px; cursor: pointer; color: var(--dim);
+    box-shadow: 0 1px 4px rgba(0,0,0,.15);
+  }
+  .drawer .d-emoji { font-size: 44px; }
+  .drawer h2 { font-size: 20px; margin: 6px 0 2px; display: flex; align-items: center; gap: 10px; }
+  .drawer h2 .live-pill { background: var(--green); color: #fff; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 8px; letter-spacing: .5px; }
+  .drawer h2 .ended-pill { background: #b8b2a6; color: #fff; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 8px; letter-spacing: .5px; }
+  .drawer .d-role { color: var(--dim); font-size: 13px; margin-bottom: 14px; }
+  .drawer section { margin-bottom: 16px; }
+  .drawer section h4 { font-size: 11px; letter-spacing: .8px; color: var(--dim); text-transform: uppercase; margin-bottom: 6px; }
+  .drawer ul { padding-left: 18px; font-size: 13px; }
+  .drawer li { margin-bottom: 3px; }
+  .drawer .kv { font-size: 13px; line-height: 1.7; }
+  .drawer code, .drawer pre {
+    background: #f0ead9; border-radius: 6px; font-size: 12px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .drawer pre { padding: 10px 12px; white-space: pre-wrap; word-break: break-word; }
+  .drawer .q {
+    background: #fdf6e3; border-left: 3px solid var(--yellow);
+    padding: 10px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 8px;
+  }
+  .drawer .q .qid { font-weight: 700; font-size: 11px; color: #a07a10; }
+  .btn {
+    border: none; border-radius: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 700; padding: 9px 16px;
+    color: #fff; background: var(--green);
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .btn.stop { background: var(--red); }
+  .btn.secondary { background: #6a5a8a; }
+  .btn:disabled { background: #b8b2a6; cursor: default; }
+  .term-wrap {
+    background: #1e1e1e; border-radius: 8px; padding: 8px;
+    flex: 1; min-height: 320px; margin-top: 4px;
+  }
+  #d-term { height: 100%; min-height: 300px; }
+  .term-note { font-size: 12px; color: var(--dim); margin-top: 6px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+  .field input, .field select {
+    width: 100%; padding: 8px 10px; border: 1px solid #d6cfc0;
+    border-radius: 8px; font-size: 13px; background: #fff;
+  }
+  .err { color: var(--red); font-size: 12px; margin-top: 8px; min-height: 16px; }
+  .overlay { position: fixed; inset: 0; z-index: 90; display: none; }
+  .overlay.show { display: block; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>🏢 <span id="h-project">claude-team</span></h1>
+    <div class="goal" id="h-goal"></div>
+    <div class="spacer"></div>
+    <div class="chip" id="h-tasks">📋 —</div>
+    <div class="chip" id="h-master">📄 MASTER —</div>
+    <div class="chip alert" id="h-questions" style="display:none" onclick="openBossDrawer()">❓ —</div>
+  </header>
+  <div class="offline" id="offline">⚠️ Lost connection to claude-team office server — is it still running?</div>
+
+  <div class="office">
+    <div class="room">
+      <div class="room-label">LEADERSHIP</div>
+      <div class="desks" id="leadership"></div>
+    </div>
+    <div class="room">
+      <div class="room-label">WORKERS</div>
+      <div class="desks" id="workers"></div>
+    </div>
+    <div class="feed">
+      <h3>📋 RECENT COMPLETIONS</h3>
+      <div id="feed"><div class="empty">No completed tasks yet.</div></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay" onclick="closeDrawer()"></div>
+  <div class="drawer" id="drawer" style="display:flex;flex-direction:column">
+    <button class="close" onclick="closeDrawer()" title="Close (Esc)">✕</button>
+    <div id="drawer-body" style="display:flex;flex-direction:column;flex:1"></div>
+  </div>
+
+<script>
+const WORKER_EMOJI = ['🧑‍💻','👩‍💻','👨‍💻','🧑‍🔬','👩‍🔧','🧑‍🎨','👨‍🏭','👩‍🚀'];
+const ROLE_EMOJI = {
+  'orchestrator': '🧑‍✈️', 'project-manager': '🧑‍💼',
+  'architect': '👷', 'editor': '🧑‍🏫', 'researcher': '🕵️',
+};
+const STATUS_LABEL = {
+  working: 'working', idle: 'idle', blocked: 'blocked', paused: 'paused',
+  review_needed: 'review', done: 'done', unknown: 'not started',
+};
+const BUBBLES = {
+  working: { text: '⌨️ …', red: false }, idle: { text: '💤', red: false },
+  blocked: { text: '🚧 blocked!', red: true }, paused: { text: '🔴 paused', red: true },
+  review_needed: { text: '👀 review me', red: false }, done: { text: '✅ done', red: false },
+};
+const MODEL_OPTIONS = [
+  { value: 'opus', label: 'Opus', desc: 'strongest, best for planning/architecture' },
+  { value: 'sonnet', label: 'Sonnet', desc: 'balanced, good default' },
+  { value: 'haiku', label: 'Haiku', desc: 'fastest & cheapest' },
+  { value: 'default', label: 'Default', desc: 'let Claude Code decide' },
+];
+const MODEL_LABEL = Object.fromEntries(MODEL_OPTIONS.map(m => [m.value, m.label]));
+function modelOptionsHtml(selected) {
+  return MODEL_OPTIONS.map(o =>
+    `<option value="${o.value}" ${o.value === selected ? 'selected' : ''}>${esc(o.label)} — ${esc(o.desc)}</option>`
+  ).join('');
+}
+
+let state = null;
+let drawerAgent = null;      // agent name, 'BOSS', or 'HIRE'
+let drawerSession = null;    // session value at last drawer render (to detect changes)
+let term = null, termWs = null, fitAddon = null;
+let seenAgents = null;       // for walk-in animation on newly hired agents
+
+function emojiFor(agent, idx) {
+  return ROLE_EMOJI[agent.name] || WORKER_EMOJI[idx % WORKER_EMOJI.length];
+}
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ── Desks ──────────────────────────────────────────────
+function deskHtml(agent, idx, arrive) {
+  const st = agent.status in STATUS_LABEL ? agent.status : 'unknown';
+  const bubble = BUBBLES[st];
+  const ctx = agent.contextUsedPercent || 0;
+  const ctxClass = ctx >= 85 ? 'hot' : ctx >= 70 ? 'warn' : '';
+  return `
+  <div class="desk ${st} ${arrive ? 'arrive' : ''}" onclick="openDrawer('${esc(agent.name)}')">
+    <div class="person">${emojiFor(agent, idx)}
+      ${bubble ? `<div class="bubble ${bubble.red ? 'red' : ''}">${bubble.text}</div>` : ''}
+    </div>
+    <div class="desk-top">🖥️${agent.session === 'live' ? '<span class="live-tag">LIVE</span>' : ''}</div>
+    <div class="nameplate">
+      <div class="name">${esc(agent.name)}</div>
+      <div class="role">${esc(agent.role)}</div>
+      <div class="modeltag">${MODEL_LABEL[agent.model] || esc(agent.model)}</div>
+      <div class="statusline"><span class="led ${st}"></span>${STATUS_LABEL[st]}</div>
+      <div class="ctxbar"><div class="${ctxClass}" style="width:${Math.min(ctx,100)}%"></div></div>
+      ${agent.currentTaskTitle ? `<div class="tasktag">📌 ${esc(agent.currentTaskTitle)}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function bossDeskHtml(nQuestions) {
+  return `
+  <div class="desk boss" onclick="openBossDrawer()">
+    <div class="person">🧔
+      ${nQuestions > 0 ? `<div class="bubble red">❓ ${nQuestions} for you</div>` : `<div class="bubble">☕</div>`}
+    </div>
+    ${nQuestions > 0 ? `<div class="badge">${nQuestions}</div>` : ''}
+    <div class="desk-top">📥</div>
+    <div class="nameplate">
+      <div class="name">You</div>
+      <div class="role">The Human</div>
+      <div class="statusline"><span class="led ${nQuestions ? 'blocked' : 'idle'}"></span>${nQuestions ? nQuestions + ' open question' + (nQuestions > 1 ? 's' : '') : 'all clear'}</div>
+    </div>
+  </div>`;
+}
+
+function hireDeskHtml() {
+  return `
+  <div class="desk hire" onclick="openHireDrawer()">
+    <div class="person" style="opacity:.35">🪑</div>
+    <div class="desk-top">➕</div>
+    <div class="nameplate">
+      <div class="name">Hire</div>
+      <div class="role">add a new agent</div>
+    </div>
+  </div>`;
+}
+
+// ── Render loop ────────────────────────────────────────
+function render() {
+  if (!state) return;
+  document.getElementById('h-project').textContent = state.projectName;
+  document.getElementById('h-goal').textContent = state.projectGoal;
+  const t = state.taskSummary;
+  document.getElementById('h-tasks').textContent = `📋 ${t.done}/${t.total} done · ${t.inProgress} active · ${t.queued} queued`;
+  const mPct = Math.round((state.masterDoc.tokens / state.masterDoc.budget) * 100);
+  document.getElementById('h-master').textContent = `📄 MASTER ${mPct}%`;
+  const qChip = document.getElementById('h-questions');
+  if (state.openQuestions.length > 0) {
+    qChip.style.display = '';
+    qChip.textContent = `❓ ${state.openQuestions.length} question${state.openQuestions.length > 1 ? 's' : ''} for you`;
+  } else qChip.style.display = 'none';
+
+  const firstRender = seenAgents === null;
+  if (firstRender) seenAgents = new Set();
+  const isNew = a => !firstRender && !seenAgents.has(a.name);
+
+  const leadership = state.agents.filter(a => a.isLeadership);
+  const workers = state.agents.filter(a => !a.isLeadership);
+  document.getElementById('leadership').innerHTML =
+    bossDeskHtml(state.openQuestions.length) + leadership.map((a, i) => deskHtml(a, i, isNew(a))).join('');
+  document.getElementById('workers').innerHTML =
+    workers.map((a, i) => deskHtml(a, i, isNew(a))).join('') + hireDeskHtml();
+  state.agents.forEach(a => seenAgents.add(a.name));
+
+  const feed = document.getElementById('feed');
+  feed.innerHTML = state.completions.length
+    ? state.completions.map(c =>
+        `<div class="item">✅ <span class="who">${esc(c.agent)}</span> — ${esc(c.title)}${c.summary ? ` <span style="color:var(--dim)">· ${esc(c.summary)}</span>` : ''}</div>`
+      ).join('')
+    : '<div class="empty">No completed tasks yet.</div>';
+
+  syncDrawer();
+}
+
+// ── Drawer management ──────────────────────────────────
+function show(on) {
+  document.getElementById('drawer').classList.toggle('open', on);
+  document.getElementById('overlay').classList.toggle('show', on);
+}
+function openDrawer(name) { detachTerminal(); drawerAgent = name; renderAgentDrawer(); show(true); }
+function openBossDrawer() { detachTerminal(); drawerAgent = 'BOSS'; renderBossDrawer(); show(true); }
+function openHireDrawer() { detachTerminal(); drawerAgent = 'HIRE'; renderHireDrawer(); show(true); }
+function closeDrawer() { detachTerminal(); drawerAgent = null; show(false); document.getElementById('drawer').classList.remove('wide'); }
+
+// Called every poll: refresh dynamic bits without destroying the terminal.
+function syncDrawer() {
+  if (!drawerAgent) return;
+  if (drawerAgent === 'BOSS') { renderBossDrawer(); return; }
+  if (drawerAgent === 'HIRE') return; // form — don't clobber user input
+  const a = state.agents.find(x => x.name === drawerAgent);
+  if (!a) { closeDrawer(); return; }
+  if (a.session !== drawerSession) { renderAgentDrawer(); return; } // session started/ended → rebuild
+  const sb = document.getElementById('d-status-body');
+  if (sb) sb.innerHTML = statusHtml(a);
+}
+
+function statusHtml(a) {
+  const docPct = Math.round((a.docTokens / a.docBudget) * 100);
+  return `
+    ${STATUS_LABEL[a.status] || esc(a.status)}
+    ${a.currentTaskTitle ? `<br>📌 ${esc(a.currentTaskTitle)}` : ''}
+    ${a.currentPhase ? `<br>Phase: ${esc(a.currentPhase)}` : ''}
+    ${a.blockedReason ? `<br>🚧 ${esc(a.blockedReason)}` : ''}
+    <br>Model: ${MODEL_LABEL[a.model] || esc(a.model)}
+    <br>Context used: ${a.contextUsedPercent || 0}% · Memory doc: ${docPct}% of ${a.docBudget}t · Inbox: ${a.inboxCount}
+    ${a.lastUpdated ? `<br>Last update: ${new Date(a.lastUpdated).toLocaleString()}` : ''}`;
+}
+
+function renderAgentDrawer() {
+  const idx = state.agents.findIndex(x => x.name === drawerAgent);
+  const a = state.agents[idx];
+  if (!a) { closeDrawer(); return; }
+  drawerSession = a.session;
+  const instrFile = a.name === 'orchestrator' ? '.claude-team/ORCHESTRATOR.md' : `.claude-team/agents/${a.name}.md`;
+  const body = document.getElementById('drawer-body');
+  const live = a.session === 'live';
+  const ended = a.session === 'ended';
+  document.getElementById('drawer').classList.toggle('wide', live || ended);
+
+  body.innerHTML = `
+    <div class="d-emoji">${emojiFor(a, idx)}</div>
+    <h2>${esc(a.name)}
+      ${live ? '<span class="live-pill">LIVE</span>' : ''}${ended ? '<span class="ended-pill">SESSION ENDED</span>' : ''}
+    </h2>
+    <div class="d-role">${esc(a.role)}${a.isLeadership ? ' · leadership' : ''}</div>
+    <section>
+      <h4>Status</h4>
+      <div class="kv" id="d-status-body">${statusHtml(a)}</div>
+    </section>
+    <section id="d-actions">
+      ${live
+        ? `<button class="btn stop" onclick="stopAgent('${esc(a.name)}')">⏹ Stop session</button>`
+        : state.canLaunch
+          ? `
+            <div class="field" style="margin-bottom:8px">
+              <label>Model</label>
+              <select id="launch-model">${modelOptionsHtml(a.model)}</select>
+            </div>
+            <button class="btn" onclick="launchAgent('${esc(a.name)}')">▶ ${ended ? 'Relaunch' : 'Launch'} agent</button>`
+          : `<div class="kv">Launching from the browser is unavailable (node-pty). Launch from a terminal:</div>`}
+      <div class="err" id="d-err"></div>
+    </section>
+    ${live || ended ? `
+      <section style="flex:1;display:flex;flex-direction:column">
+        <h4>Terminal</h4>
+        <div class="term-wrap"><div id="d-term"></div></div>
+        <div class="term-note">${live ? 'This is a real Claude Code session — you can type into it (e.g. approve permission prompts).' : 'Final output of the ended session.'}</div>
+      </section>` : `
+      <section>
+        <h4>Launch manually</h4>
+        <pre>claude
+# then say:
+"Read CLAUDE.md and ${instrFile} and start working"</pre>
+      </section>
+      <section>
+        <h4>Responsibilities</h4>
+        <ul>${a.responsibilities.map(r => `<li>${esc(r)}</li>`).join('')}</ul>
+      </section>
+      <section>
+        <h4>Files</h4>
+        <div class="kv">
+          <code>${instrFile}</code><br>
+          <code>.claude-team/tasks/${esc(a.name)}-inbox.json</code><br>
+          <code>.claude-team/docs/agents/${esc(a.name)}.md</code>
+        </div>
+      </section>`}
+  `;
+  if (live || ended) attachTerminal(a.name);
+}
+
+function renderBossDrawer() {
+  document.getElementById('drawer').classList.remove('wide');
+  document.getElementById('drawer-body').innerHTML = `
+    <div class="d-emoji">🧔</div>
+    <h2>Your Inbox</h2>
+    <div class="d-role">Questions the team needs you to answer</div>
+    ${state.openQuestions.length ? state.openQuestions.map(q => `
+      <div class="q">
+        <div class="qid">${esc(q.id)} · from ${esc(q.from)} · ${esc(q.priority)}</div>
+        <div>${esc(q.question)}</div>
+      </div>`).join('') : '<p style="font-size:13px">Nothing waiting on you. ☕</p>'}
+    <section style="margin-top:14px">
+      <h4>How to answer</h4>
+      <pre>Open .claude-team/HUMAN_INPUT.md,
+write your reply under "HUMAN REPLY:",
+and save the file.</pre>
+    </section>`;
+}
+
+function renderHireDrawer() {
+  document.getElementById('drawer').classList.remove('wide');
+  document.getElementById('drawer-body').innerHTML = `
+    <div class="d-emoji">🤝</div>
+    <h2>Hire a new agent</h2>
+    <div class="d-role">Creates instructions, memory doc, and coordination files</div>
+    <div class="field"><label>Name</label><input id="hire-name" placeholder="e.g. qa-tester"></div>
+    <div class="field"><label>Role</label><input id="hire-role" placeholder="e.g. QA Engineer"></div>
+    <div class="field"><label>Responsibilities (comma separated)</label><input id="hire-resp" placeholder="Write tests, Edge cases, Bug reports"></div>
+    <div class="field"><label>Model</label><select id="hire-model">${modelOptionsHtml('sonnet')}</select></div>
+    <button class="btn secondary" onclick="hire()">🤝 Hire</button>
+    <div class="err" id="hire-err"></div>`;
+}
+
+// ── Actions ────────────────────────────────────────────
+async function post(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+async function launchAgent(name) {
+  const err = document.getElementById('d-err');
+  const modelSel = document.getElementById('launch-model');
+  try {
+    await post('/api/launch', { agent: name, model: modelSel ? modelSel.value : undefined });
+    await poll();           // pick up session=live and rebuild drawer with terminal
+  } catch (e) { if (err) err.textContent = e.message; }
+}
+
+async function stopAgent(name) {
+  const err = document.getElementById('d-err');
+  try { await post('/api/stop', { agent: name }); } catch (e) { if (err) err.textContent = e.message; }
+}
+
+async function hire() {
+  const err = document.getElementById('hire-err');
+  try {
+    const name = document.getElementById('hire-name').value;
+    const role = document.getElementById('hire-role').value;
+    const responsibilities = document.getElementById('hire-resp').value || 'Implement features, Write tests';
+    const model = document.getElementById('hire-model').value;
+    const { name: finalName } = await post('/api/hire', { name, role, responsibilities, model });
+    await poll();           // new desk walks in
+    openDrawer(finalName);  // show the new agent, ready to launch
+  } catch (e) { err.textContent = e.message; }
+}
+
+// ── Terminal ───────────────────────────────────────────
+function attachTerminal(name) {
+  const el = document.getElementById('d-term');
+  if (!el) return;
+  if (typeof Terminal === 'undefined') {
+    el.innerHTML = '<div style="color:#ccc;font-size:13px;padding:12px">Terminal view needs internet access (xterm.js CDN). The session is still running.</div>';
+    return;
+  }
+  term = new Terminal({ fontSize: 12.5, theme: { background: '#1e1e1e' }, cursorBlink: true, convertEol: false, scrollback: 5000 });
+  fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(el);
+  fitAddon.fit();
+
+  termWs = new WebSocket(`ws://${location.host}/term?agent=${encodeURIComponent(name)}`);
+  termWs.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'data') term.write(msg.data);
+    if (msg.type === 'exit') term.write(`\r\n\x1b[90m[session ended with code ${msg.code}]\x1b[0m\r\n`);
+  };
+  termWs.onopen = () => {
+    if (fitAddon) {
+      fitAddon.fit();
+      termWs.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    }
+  };
+  term.onData(d => { if (termWs?.readyState === 1) termWs.send(JSON.stringify({ type: 'input', data: d })); });
+  window.addEventListener('resize', fitTerm);
+}
+function fitTerm() {
+  if (fitAddon && term && termWs?.readyState === 1) {
+    fitAddon.fit();
+    termWs.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+  }
+}
+function detachTerminal() {
+  window.removeEventListener('resize', fitTerm);
+  try { termWs?.close(); } catch {}
+  try { term?.dispose(); } catch {}
+  term = null; termWs = null; fitAddon = null; drawerSession = null;
+}
+
+// ── Poll loop ──────────────────────────────────────────
+async function poll() {
+  try {
+    const res = await fetch('/api/state');
+    state = await res.json();
+    document.getElementById('offline').style.display = 'none';
+    render();
+  } catch {
+    document.getElementById('offline').style.display = 'block';
+  }
+}
+document.addEventListener('keydown', (e) => {
+  // Don't steal Escape while typing in the agent terminal
+  if (e.key === 'Escape' && drawerAgent && !(term && document.activeElement?.closest('.term-wrap'))) closeDrawer();
+});
+
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>

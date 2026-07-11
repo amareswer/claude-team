@@ -15,7 +15,7 @@ npm install -g .
 npx claude-team init
 ```
 
-**Requirements**: Node.js 18+ and Claude Code (`claude` CLI) installed.
+**Requirements**: Node.js 18+ and Claude Code (`claude` CLI) installed. `claude-team office`'s launch/hire features use `node-pty` (a native module, built automatically on install); if it can't build on your machine the office still runs, just in view-only mode.
 
 ---
 
@@ -25,7 +25,8 @@ npx claude-team init
 cd your-project
 claude-team init       # 🧙 Answer a few questions — the team is generated
 claude-team start      # 🚀 Exact launch command for every agent
-claude-team status     # 📊 Live view: agents, token usage, doc health
+claude-team status     # 📊 Terminal view: agents, token usage, doc health
+claude-team office     # 🏢 Visual office view in your browser (live)
 ```
 
 Then open one terminal per agent, run `claude` in each, and paste the prompt `claude-team start` gives you. That's the whole loop.
@@ -38,7 +39,8 @@ Then open one terminal per agent, run `claude` in each, and paste the prompt `cl
 |---------|-------------|
 | `claude-team init` | Interactive wizard — generates the full team (asks before overwriting an existing one) |
 | `claude-team start` | Print the launch instructions for every agent |
-| `claude-team status` | Agent status, context usage, doc token health, task summary |
+| `claude-team status` | Agent status, context usage, doc token health, task summary (terminal) |
+| `claude-team office` | Live visual office view of the team in your browser (`--port` to change port) |
 | `claude-team add` | Add a new worker agent to an existing team |
 | `claude-team archive` | Archive all project docs when the project is done (human-triggered) |
 
@@ -46,13 +48,14 @@ Then open one terminal per agent, run `claude` in each, and paste the prompt `cl
 
 ## The Init Wizard
 
-`claude-team init` walks through 5 steps:
+`claude-team init` walks through 6 steps:
 
 1. **Project basics** — name, goal, and category (💻 technical / ✍️ content / 🔀 mixed). Technical projects also pick a type (web, API, CLI, …) and stack; content projects pick a format (blog, book, docs, scripts, …).
 2. **Team hierarchy** — how much leadership the project needs (see below).
 3. **Worker agents** — 1–4 suggested workers based on your project type, or fully custom roles.
-4. **Coordination** — queue / parallel / pipeline task style, git checkpoints, cross-agent review, poll interval.
-5. **First task** — optionally define a starting task and assign it. If you assign it to a specific agent, it lands directly in their inbox.
+4. **Models** — which Claude model each agent uses when launched: recommended defaults (Opus for leadership, Sonnet for workers), one model for everyone, or choose per agent. See [Models](#models-per-agent) below.
+5. **Coordination** — queue / parallel / pipeline task style, git checkpoints, cross-agent review, poll interval.
+6. **First task** — optionally define a starting task and assign it. If you assign it to a specific agent, it lands directly in their inbox.
 
 ### Hierarchy options
 
@@ -72,6 +75,21 @@ Then open one terminal per agent, run `claude` in each, and paste the prompt `cl
 | Simple | Orchestrator only |
 | Standard | Editor + Orchestrator |
 | Full | Editor + Researcher + Orchestrator |
+
+---
+
+## Models (per agent)
+
+Every agent — including the orchestrator — has its own Claude model, stored in `config.json` and used whenever that agent is launched from the Office (see below):
+
+| Model | Best for |
+|---|---|
+| **Opus** | Planning, architecture, ambiguous judgment calls — the recommended default for leadership roles |
+| **Sonnet** | Most implementation work — the recommended default for workers |
+| **Haiku** | Fast, narrow, repetitive tasks |
+| **Default** | Don't pass `--model` at all — whatever `claude` resolves to on its own |
+
+Set this during `init` (Step 4) — recommended defaults, one model for the whole team, or pick per agent — and change it any time from the Office UI, either when hiring a new agent or right before launching an existing one (the choice is remembered for next time).
 
 ---
 
@@ -133,6 +151,43 @@ Every agent has three files in `.claude-team/tasks/`:
 | `<agent>-status.json` | To everyone | `idle` / `working` / `blocked` / `paused` / `review_needed` / `done`, plus context % |
 
 All inboxes share the same shape — tasks go in `tasks`, everything else (research requests, questions, ready signals) goes in `messages`. Agents write to `orchestrator-inbox.json` when blocked, and to `researcher-inbox.json` to request research.
+
+---
+
+## The Office View 🏢
+
+`claude-team office` opens a live visual dashboard in your browser — your team rendered as an office you can actually run the project from:
+
+```
+┌─ LEADERSHIP ────────────────────────────────────────────┐
+│   🧔 You      🧑‍✈️ orchestrator  🧑‍💼 PM [LIVE]  👷 architect │
+│   ❓ inbox    (desk + status)   ⌨️ working    💤 idle     │
+└─────────────────────────────────────────────────────────┘
+┌─ WORKERS ───────────────────────────────────────────────┐
+│   👩‍💻 frontend        👨‍💻 backend        ➕ Hire          │
+│   ⌨️ working…         🚧 blocked!       (empty desk)    │
+│   [▓▓▓░░░] 42% ctx    [▓▓▓▓▓░] 77% ctx                  │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Watch the team live:**
+- Every agent gets a desk with a character, status LED, live context-usage bar, and current task. Working agents type, blocked agents raise a red speech bubble, idle agents doze. Refreshes every 2 seconds straight from the `.claude-team/` files.
+- **Your desk** shows the team's open questions from `HUMAN_INPUT.md` as a red inbox badge — click it to read them.
+- A completions feed at the bottom shows recent finished work from every agent's outbox.
+
+**Launch agents from the office:**
+- Every desk shows the agent's model (OPUS / SONNET / HAIKU / DEFAULT) under its role. Click a desk → pick a model (defaults to whatever's saved) → **▶ Launch agent** starts a real `claude --model <x>` session for that agent in a pseudo-terminal, with the kickoff prompt already sent. The desk gets a green **LIVE** tag, and the chosen model is remembered for next time.
+- The drawer shows the agent's **live terminal** (a real interactive session — type into it to approve permission prompts or give instructions), plus a **⏹ Stop** button.
+- Sessions launched from the office end when you close the office (Ctrl+C). Agents you launched manually in your own terminals are untouched — the office only observes them.
+
+**Hire from the office:**
+- The dashed **➕ Hire** desk opens a form (name, role, responsibilities, model). Hiring generates the agent's instruction file, memory doc, and coordination files — same as `claude-team add` — and the new character walks in, ready to launch with the model you picked.
+
+**Notes:**
+- The server binds to `localhost` only (`http://localhost:4753`, change with `--port`). Never expose it — it can spawn processes.
+- The terminal view uses xterm.js from a CDN, so it needs internet; everything else works offline.
+- Launching requires `node-pty` (installed automatically). If it can't build on your machine, the office falls back to view-only mode and tells you.
+- Each launched agent is a full Claude Code session on your Claude subscription — launch what you need, not the whole roster at once.
 
 ---
 
