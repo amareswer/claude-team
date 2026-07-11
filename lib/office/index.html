@@ -470,6 +470,7 @@ function statusHtml(a) {
     ${a.blockedReason ? `<br>🚧 ${esc(a.blockedReason)}` : ''}
     <br>Model: ${MODEL_LABEL[a.model] || esc(a.model)}
     <br>Context used: ${a.contextUsedPercent || 0}% · Memory doc: ${docPct}% of ${a.docBudget}t · Inbox: ${a.inboxCount}
+    ${a.session === 'live' ? `<br>Auto-check: ${a.autoLoop ? `ON — nudged every ~${a.pollIntervalSeconds}s while idle` : 'OFF'}` : ''}
     ${a.lastUpdated ? `<br>Last update: ${new Date(a.lastUpdated).toLocaleString()}` : ''}`;
 }
 
@@ -477,6 +478,7 @@ function renderAgentDrawer() {
   const idx = state.agents.findIndex(x => x.name === drawerAgent);
   const a = state.agents[idx];
   if (!a) { closeDrawer(); return; }
+  detachTerminal(); // always rebuilds #d-term below — close any prior socket/instance first
   drawerSession = a.session;
   const instrFile = a.name === 'orchestrator' ? '.claude-team/ORCHESTRATOR.md' : `.claude-team/agents/${a.name}.md`;
   const body = document.getElementById('drawer-body');
@@ -496,7 +498,10 @@ function renderAgentDrawer() {
     </section>
     <section id="d-actions">
       ${live
-        ? `<button class="btn stop" onclick="stopAgent('${esc(a.name)}')">⏹ Stop session</button>`
+        ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn stop" onclick="stopAgent('${esc(a.name)}')">⏹ Stop session</button>
+            <button class="btn secondary" onclick="toggleAutoLoop('${esc(a.name)}', ${!a.autoLoop})">${a.autoLoop ? '⏸ Pause auto-check' : '🔁 Resume auto-check'}</button>
+           </div>`
         : state.canLaunch
           ? `
             <div class="field" style="margin-bottom:8px">
@@ -511,7 +516,7 @@ function renderAgentDrawer() {
       <section style="flex:1;display:flex;flex-direction:column">
         <h4>Terminal</h4>
         <div class="term-wrap"><div id="d-term"></div></div>
-        <div class="term-note">${live ? 'This is a real Claude Code session — you can type into it (e.g. approve permission prompts).' : 'Final output of the ended session.'}</div>
+        <div class="term-note">${live ? 'This is a real Claude Code session — you can type into it (e.g. approve permission prompts). While idle, it gets auto-nudged to re-check its inbox unless paused above.' : 'Final output of the ended session.'}</div>
       </section>` : `
       <section>
         <h4>Launch manually</h4>
@@ -588,6 +593,12 @@ async function launchAgent(name) {
 async function stopAgent(name) {
   const err = document.getElementById('d-err');
   try { await post('/api/stop', { agent: name }); } catch (e) { if (err) err.textContent = e.message; }
+}
+
+async function toggleAutoLoop(name, enabled) {
+  const err = document.getElementById('d-err');
+  try { await post('/api/autoloop', { agent: name, enabled }); await poll(); renderAgentDrawer(); }
+  catch (e) { if (err) err.textContent = e.message; }
 }
 
 async function hire() {

@@ -180,6 +180,8 @@ All inboxes share the same shape — tasks go in `tasks`, everything else (resea
 - The drawer shows the agent's **live terminal** (a real interactive session — type into it to approve permission prompts or give instructions), plus a **⏹ Stop** button.
 - Sessions launched from the office end when you close the office (Ctrl+C). Agents you launched manually in your own terminals are untouched — the office only observes them.
 
+**Agents actually keep checking in — not just on paper:** ORCHESTRATOR.md describes a recurring loop ("every N seconds, re-check inboxes and assign tasks"), but a real CLI session doesn't repeat on its own — it does the work it's given and stops. Agents launched from the office now get that loop for real: while a session has been quiet (no output, and nobody's mid-keystroke in its terminal) for at least the project's configured poll interval, the office types a check-in prompt into it — "re-check your inbox/status/outboxes, then continue." This applies to every launched agent, not just the orchestrator, so workers also notice new inbox tasks without a human nudging them. It's on by default and toggleable per agent (**⏸ Pause auto-check** / **🔁 Resume**) in the drawer — pause it if you want to drive an agent by hand. Agents launched in a plain terminal don't get this; they're on their own to re-check, as before.
+
 **Hire from the office:**
 - The dashed **➕ Hire** desk opens a form (name, role, responsibilities, model). Hiring generates the agent's instruction file, memory doc, and coordination files — same as `claude-team add` — and the new character walks in, ready to launch with the model you picked.
 
