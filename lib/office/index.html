@@ -312,7 +312,7 @@
   </div>
 
 <script>
-const WORKER_EMOJI = ['🧑‍💻','👩‍💻','👨‍💻','🧑‍🔬','👩‍🔧','🧑‍🎨','👨‍🏭','👩‍🚀'];
+const WORKER_EMOJI = ['🧑‍💻','👩‍💻','👨‍💻'];
 const ROLE_EMOJI = {
   'orchestrator': '🧑‍✈️', 'project-manager': '🧑‍💼',
   'architect': '👷', 'editor': '🧑‍🏫', 'researcher': '🕵️',
@@ -350,6 +350,7 @@ let drawerAgent = null;      // agent name, 'BOSS', or 'HIRE'
 let drawerSession = null;    // session value at last drawer render (to detect changes)
 let term = null, termWs = null, fitAddon = null;
 let seenAgents = null;       // for walk-in animation on newly hired agents
+let removeConfirmName = null; // agent awaiting a second click to confirm removal
 
 function emojiFor(agent, idx) {
   return ROLE_EMOJI[agent.name] || WORKER_EMOJI[idx % WORKER_EMOJI.length];
@@ -377,6 +378,7 @@ function deskHtml(agent, idx, arrive) {
       <div class="statusline"><span class="led ${st}"></span>${STATUS_LABEL[st]}</div>
       <div class="ctxbar"><div class="${ctxClass}" style="width:${Math.min(ctx,100)}%"></div></div>
       ${agent.currentTaskTitle ? `<div class="tasktag">📌 ${esc(agent.currentTaskTitle)}</div>` : ''}
+      ${agent.tokenUsage?.total > 0 ? `<div class="tasktag">🪙 ${formatTokens(agent.tokenUsage.total)}</div>` : ''}
     </div>
   </div>`;
 }
@@ -457,10 +459,10 @@ function show(on) {
   document.getElementById('drawer').classList.toggle('open', on);
   document.getElementById('overlay').classList.toggle('show', on);
 }
-function openDrawer(name) { detachTerminal(); drawerAgent = name; renderAgentDrawer(); show(true); }
+function openDrawer(name) { detachTerminal(); drawerAgent = name; removeConfirmName = null; renderAgentDrawer(); show(true); }
 function openBossDrawer() { detachTerminal(); drawerAgent = 'BOSS'; renderBossDrawer(); show(true); }
 function openHireDrawer() { detachTerminal(); drawerAgent = 'HIRE'; renderHireDrawer(); show(true); }
-function closeDrawer() { detachTerminal(); drawerAgent = null; show(false); document.getElementById('drawer').classList.remove('wide'); }
+function closeDrawer() { detachTerminal(); drawerAgent = null; removeConfirmName = null; show(false); document.getElementById('drawer').classList.remove('wide'); }
 
 // Called every poll: refresh dynamic bits without destroying the terminal.
 function syncDrawer() {
@@ -498,9 +500,13 @@ function statusHtml(a) {
 }
 
 function renderAgentDrawer() {
-  const idx = state.agents.findIndex(x => x.name === drawerAgent);
-  const a = state.agents[idx];
+  const a = state.agents.find(x => x.name === drawerAgent);
   if (!a) { closeDrawer(); return; }
+  // Match the same per-group index used when the desk grid picked emojiFor(),
+  // not the position in the combined list — otherwise the drawer's fallback
+  // emoji (for agents without a fixed ROLE_EMOJI entry) won't match the desk.
+  const group = state.agents.filter(x => !!x.isLeadership === !!a.isLeadership);
+  const idx = group.findIndex(x => x.name === a.name);
   detachTerminal(); // always rebuilds #d-term below — close any prior socket/instance first
   drawerSession = a.session;
   const instrFile = a.name === 'orchestrator' ? '.claude-team/ORCHESTRATOR.md' : `.claude-team/agents/${a.name}.md`;
@@ -535,6 +541,16 @@ function renderAgentDrawer() {
           : `<div class="kv">Launching from the browser is unavailable (node-pty). Launch from a terminal:</div>`}
       <div class="err" id="d-err"></div>
     </section>
+    ${a.name !== 'orchestrator' ? `
+    <section>
+      ${removeConfirmName === a.name
+        ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-size:13px">Remove ${esc(a.name)} and delete their files?</span>
+            <button class="btn stop" onclick="removeAgent('${esc(a.name)}')">Yes, remove</button>
+            <button class="btn secondary" onclick="cancelRemove()">Cancel</button>
+           </div>`
+        : `<button class="btn secondary" onclick="askRemove('${esc(a.name)}')">🔥 Remove agent</button>`}
+    </section>` : ''}
     ${live || ended ? `
       <section style="flex:1;display:flex;flex-direction:column">
         <h4>Terminal</h4>
@@ -622,6 +638,18 @@ async function toggleAutoLoop(name, enabled) {
   const err = document.getElementById('d-err');
   try { await post('/api/autoloop', { agent: name, enabled }); await poll(); renderAgentDrawer(); }
   catch (e) { if (err) err.textContent = e.message; }
+}
+
+function askRemove(name) { removeConfirmName = name; renderAgentDrawer(); }
+function cancelRemove() { removeConfirmName = null; renderAgentDrawer(); }
+async function removeAgent(name) {
+  const err = document.getElementById('d-err');
+  try {
+    await post('/api/remove', { agent: name });
+    removeConfirmName = null;
+    closeDrawer();
+    await poll();
+  } catch (e) { if (err) err.textContent = e.message; }
 }
 
 async function hire() {
