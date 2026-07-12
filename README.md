@@ -9,30 +9,31 @@ Build a team of Claude Code instances that collaborate on any project — techni
 
 claude-team is **not** installed as a global npm command — nothing gets added to your system PATH or global npm state. Every project that wants a team runs it locally, scoped to just that project folder.
 
-**Option A — zero install, works for any project (any language, not just Node):**
+**Easiest — one command, works the same on macOS, Linux, and Windows (any language project, not just Node):**
 
 ```bash
 cd your-project
-node /path/to/claude-team/bin/claude-team.js init
+npx /path/to/claude-team init
 ```
 
-Every command works the same way — swap `init` for `office`, `status`, `add`, `start`, `archive`. If you use this a lot, add a shell alias in your `~/.zshrc` / `~/.bashrc` (this is a plain shell alias, not an npm install — it still runs the same local script):
-
-```bash
-alias claude-team='node /path/to/claude-team/bin/claude-team.js'
-```
-
-**Option B — local devDependency, for target projects that are already Node projects:**
-
-```bash
-cd your-project
-npm install --save-dev /path/to/claude-team
-npx claude-team init
-```
-
-This records claude-team in *that project's* `package.json`/`node_modules` only — nothing global, nothing shared across projects. `npx` finds the locally-installed binary automatically.
+`npx` runs claude-team straight from the cloned folder — no install step, nothing written to your project, nothing left behind afterward. Same command works for every subcommand: swap `init` for `office`, `status`, `add`, `remove`, `start`, `archive`. On Windows, run it exactly the same way from PowerShell or cmd.exe — `npx` ships with Node and resolves the local path identically on every OS.
 
 Replace `/path/to/claude-team` with wherever you cloned this repo, e.g. `/Users/nishita/Desktop/Amaresh/projects/claude-team`.
+
+**Alternatives, if you want something more permanent:**
+
+- **Direct node invocation** — identical to the npx form, just spelled out: `node /path/to/claude-team/bin/claude-team.js init`. Useful if `npx` isn't on your PATH for some reason.
+- **Local devDependency** — for target projects that are already Node projects and want claude-team pinned in their own `package.json`:
+  ```bash
+  cd your-project
+  npm install --save-dev /path/to/claude-team
+  npx claude-team init
+  ```
+  This records claude-team in *that project's* `package.json`/`node_modules` only — nothing global, nothing shared across projects.
+- **Shell alias** (macOS/Linux only — skip on Windows, the `npx` form above is already just as short): add to `~/.zshrc` / `~/.bashrc`:
+  ```bash
+  alias claude-team='npx /path/to/claude-team'
+  ```
 
 **Requirements**: Node.js 18+ and Claude Code (`claude` CLI) installed. `claude-team office`'s launch/hire features use `node-pty` (a native module, built automatically the first time you run `npm install` inside the claude-team repo itself); if it can't build on your machine the office still runs, just in view-only mode.
 
@@ -48,7 +49,7 @@ claude-team status     # 📊 Terminal view: agents, token usage, doc health
 claude-team office     # 🏢 Visual office view in your browser (live)
 ```
 
-(`claude-team` above stands for whichever invocation you set up — `npx claude-team`, the alias, or the full `node /path/to/.../bin/claude-team.js`.)
+(`claude-team` above stands for whichever invocation you're using — `npx /path/to/claude-team`, the alias, or the full `node /path/to/.../bin/claude-team.js`.)
 
 Then open one terminal per agent, run `claude` in each, and paste the prompt `claude-team start` gives you. That's the whole loop.
 
@@ -63,6 +64,7 @@ Then open one terminal per agent, run `claude` in each, and paste the prompt `cl
 | `claude-team status` | Agent status, context usage, doc token health, task summary (terminal) |
 | `claude-team office` | Live visual office view of the team in your browser (`--port` to change port) |
 | `claude-team add` | Add a new worker agent to an existing team |
+| `claude-team remove` | Remove an agent from the team (deletes its instructions, memory doc, and task files) |
 | `claude-team archive` | Archive all project docs when the project is done (human-triggered) |
 
 ---
