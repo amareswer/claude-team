@@ -1,4 +1,6 @@
-# claude-team 🤖
+<p align="center"><img src="lib/office/logo.svg" width="112" alt="claude-team — an office building whose lit windows are the team's status lights"></p>
+
+<h1 align="center">claude-team</h1>
 
 **Multi-agent coordination CLI for Claude Code**
 Build a team of Claude Code instances that collaborate on any project — technical or content — with role hierarchy, two-way task coordination, token safety, living documentation, and a built-in channel for talking to you (the human).

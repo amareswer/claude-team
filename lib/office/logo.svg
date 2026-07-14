@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="claude-team logo">
+  <!-- The office: a building whose lit windows are the team's status LEDs -->
+  <rect x="0" y="0" width="128" height="128" rx="28" fill="#4a4238"/>
+  <!-- building -->
+  <rect x="34" y="24" width="60" height="80" rx="5" fill="#fffdf8"/>
+  <!-- roof cap -->
+  <rect x="30" y="18" width="68" height="10" rx="4" fill="#8b6b4a"/>
+  <!-- windows: each one an agent's status light -->
+  <g>
+    <rect x="43" y="36" width="11" height="11" rx="2.5" fill="#3d9a50"/>
+    <rect x="58.5" y="36" width="11" height="11" rx="2.5" fill="#3d9a50"/>
+    <rect x="74" y="36" width="11" height="11" rx="2.5" fill="#d9a421"/>
+    <rect x="43" y="52" width="11" height="11" rx="2.5" fill="#e8e2d6"/>
+    <rect x="58.5" y="52" width="11" height="11" rx="2.5" fill="#cc4433"/>
+    <rect x="74" y="52" width="11" height="11" rx="2.5" fill="#3d9a50"/>
+    <rect x="43" y="68" width="11" height="11" rx="2.5" fill="#3a7bd5"/>
+    <rect x="58.5" y="68" width="11" height="11" rx="2.5" fill="#e8e2d6"/>
+    <rect x="74" y="68" width="11" height="11" rx="2.5" fill="#3d9a50"/>
+  </g>
+  <!-- door -->
+  <rect x="57" y="88" width="14" height="16" rx="3" fill="#8b6b4a"/>
+  <!-- ground -->
+  <rect x="24" y="102" width="80" height="6" rx="3" fill="#6f5439"/>
+</svg>
