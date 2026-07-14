@@ -289,7 +289,8 @@
 </head>
 <body>
   <header>
-    <h1><img src="/logo.svg" alt="" style="height:24px;vertical-align:-6px;margin-right:2px"> <span id="h-project">claude-team</span></h1>
+    <h1><img src="/logo.svg" alt="" style="height:24px;vertical-align:-6px;margin-right:2px"> <span id="h-project">claude-team</span>
+      <span onclick="openBossDrawer()" title="Rename project / edit goal" style="cursor:pointer;font-size:12px;opacity:.45;margin-left:2px">✏️</span></h1>
     <div class="goal" id="h-goal"></div>
     <div class="spacer"></div>
     <div class="chip" id="h-tasks">📋 —</div>
@@ -625,6 +626,14 @@ function renderBossDrawer() {
       <div id="task-ok" style="font-size:12px;color:#2e7d32;margin-top:4px"></div>
     </section>
     <section style="margin-top:14px">
+      <h4>Project</h4>
+      <div class="field"><label>Name</label><input id="proj-name" value="${esc(state.projectName)}"></div>
+      <div class="field"><label>Goal</label><textarea id="proj-goal" rows="2">${esc(state.projectGoal || '')}</textarea></div>
+      <button class="btn secondary" onclick="saveProject()">💾 Save</button>
+      <div class="err" id="proj-err"></div>
+      <div id="proj-ok" style="font-size:12px;color:#2e7d32;margin-top:4px"></div>
+    </section>
+    <section style="margin-top:14px">
       <h4>Prefer the file?</h4>
       <pre>Answers land under "HUMAN REPLY:" in
 .claude-team/HUMAN_INPUT.md — editing
@@ -682,6 +691,20 @@ async function answerQuestion(id) {
     await post('/api/answer', { id, answer });
     await poll();
     renderBossDrawer();
+  } catch (e) { if (err) err.textContent = e.message; }
+}
+
+async function saveProject() {
+  const err = document.getElementById('proj-err');
+  try {
+    await post('/api/project', {
+      name: document.getElementById('proj-name').value,
+      goal: document.getElementById('proj-goal').value,
+    });
+    await poll(); // header picks up the new name/goal
+    const ok = document.getElementById('proj-ok');
+    if (ok) ok.textContent = 'Saved.';
+    if (err) err.textContent = '';
   } catch (e) { if (err) err.textContent = e.message; }
 }
 

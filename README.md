@@ -199,6 +199,7 @@ All inboxes share the same shape — tasks go in `tasks`, everything else (resea
 - Every agent gets a desk with a character, status LED, live context-usage bar, and current task. Working agents type, blocked agents raise a red speech bubble, idle agents doze. Refreshes every 2 seconds straight from the `.claude-team/` files.
 - **Your desk** shows the team's unanswered questions from `HUMAN_INPUT.md` as a red inbox badge — click it to read them and **answer right there**: your reply is written under the question's `HUMAN REPLY:` section (same as editing the file by hand) and the asker's inbox gets a `human_reply` message so they notice without polling the file.
 - Your desk drawer also has a **Hand out a task** form (title, description, priority, assignee). Tasks go to `queue.json` + `master.json`; assigning to a specific agent also delivers it straight to their inbox.
+- The **project name and goal** in the header are editable too — click the ✏️ next to the title (or open your desk drawer) to rename the project or reword the goal; the change is saved to `config.json` and mirrored to `master.json`.
 - A completions feed at the bottom shows recent finished work from every agent's outbox.
 
 **Launch agents from the office:**
