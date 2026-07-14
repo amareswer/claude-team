@@ -18,7 +18,7 @@ npx /path/to/claude-team init
 
 `npx` runs claude-team straight from the cloned folder — no install step, nothing written to your project, nothing left behind afterward. Same command works for every subcommand: swap `init` for `office`, `status`, `add`, `remove`, `start`, `archive`. On Windows, run it exactly the same way from PowerShell or cmd.exe — `npx` ships with Node and resolves the local path identically on every OS.
 
-Replace `/path/to/claude-team` with wherever you cloned this repo, e.g. `/Users/nishita/Desktop/Amaresh/projects/claude-team`.
+Replace `/path/to/claude-team` with wherever you cloned this repo, e.g. `~/projects/claude-team`.
 
 **Alternatives, if you want something more permanent:**
 
@@ -208,7 +208,10 @@ All inboxes share the same shape — tasks go in `tasks`, everything else (resea
 **Hire from the office:**
 - The dashed **➕ Hire** desk opens a form (name, role, responsibilities, model). Hiring generates the agent's instruction file, memory doc, and coordination files — same as `claude-team add` — and the new character walks in, ready to launch with the model you picked.
 
-**Real token usage, not a guess:** every launched agent's drawer shows a live "🪙 Tokens used" line — exact `input`/`output`/`cache write`/`cache read` counts, not the self-reported `contextUsedPercent` (which is just the agent's own estimate of how full its context window is; the two measure different things and are both shown). The header also totals it across the whole team for the current office run. This works by correlating the agent's session to the transcript file Claude Code writes for it under `~/.claude/projects/`, so it only applies to agents launched from the office — one launched in a plain terminal has no such correlation and won't show a token count. If the office can't find the transcript within ~20s (rare), the drawer says so instead of showing a wrong number.
+**Fire from the office:**
+- Every agent's drawer (except the orchestrator's) has a **🔥 Remove agent** button with an inline confirm step — same as `claude-team remove`. If the agent has a live session launched from the office, it's stopped first; then the agent's instruction file, memory doc, and inbox/outbox/status files are deleted and the desk disappears. Their unfinished tasks in `master.json` and `queue.json` go back to the queue as `unassigned` for the orchestrator to hand out again; completed tasks keep their history.
+
+**Real token usage, not a guess:** every launched agent's desk shows a compact 🪙 total, and its drawer shows a live "🪙 Tokens used" line — exact `input`/`output`/`cache write`/`cache read` counts, not the self-reported `contextUsedPercent` (which is just the agent's own estimate of how full its context window is; the two measure different things and are both shown). The header also totals it across the whole team for the current office run. This works by correlating the agent's session to the transcript file Claude Code writes for it under `~/.claude/projects/`, so it only applies to agents launched from the office — one launched in a plain terminal has no such correlation and won't show a token count. If the office can't find the transcript within ~20s (rare), the drawer says so instead of showing a wrong number.
 
 **Notes:**
 - The server binds to `localhost` only (`http://localhost:4753`, change with `--port`). Never expose it — it can spawn processes.
