@@ -64,7 +64,7 @@ Then open one terminal per agent, run `claude` in each, and paste the prompt `cl
 | `claude-team init` | Interactive wizard — generates the full team (asks before overwriting an existing one) |
 | `claude-team start` | Print the launch instructions for every agent |
 | `claude-team status` | Agent status, context usage, doc token health, task summary (terminal) |
-| `claude-team office` | Live visual office view of the team in your browser (`--port` to change port) |
+| `claude-team office` | Live visual office view of the team in your browser (`--port` to change port, `--no-open` to skip auto-opening a tab) |
 | `claude-team add` | Add a new worker agent to an existing team |
 | `claude-team remove` | Remove an agent from the team (deletes its instructions, memory doc, and task files) |
 | `claude-team archive` | Archive all project docs when the project is done (human-triggered) |
@@ -200,6 +200,18 @@ All inboxes share the same shape — tasks go in `tasks`, everything else (resea
 - **Your desk** shows the team's unanswered questions from `HUMAN_INPUT.md` as a red inbox badge — click it to read them and **answer right there**: your reply is written under the question's `HUMAN REPLY:` section (same as editing the file by hand) and the asker's inbox gets a `human_reply` message so they notice without polling the file.
 - Your desk drawer also has a **Hand out a task** form (title, description, priority, assignee). Tasks go to `queue.json` + `master.json`; assigning to a specific agent also delivers it straight to their inbox.
 - The **project name and goal** in the header are editable too — click the ✏️ next to the title (or open your desk drawer) to rename the project or reword the goal; the change is saved to `config.json` and mirrored to `master.json`.
+
+**Task board:**
+- Click the 📋 task chip in the header to open the board — every task from `master.json` grouped by state (in progress / queued / done / cancelled). Each open task has an assignee dropdown (reassigning moves it between inboxes, so two agents never hold the same work) and a 🚫 Cancel button. Done and cancelled tasks are read-only history.
+
+**Desktop notifications:**
+- The 🔕/🔔 chip in the header toggles browser notifications: you get pinged when a new question lands in your inbox or an agent becomes blocked/paused — useful while the office tab is in the background. Uses the browser's Notification permission; nothing is sent anywhere.
+
+**What did it cost?**
+- Token chips show an **≈ $ estimate** next to the counts (header team total and per-agent in the drawer), computed from exact token counts at each agent's model's API rates — cache writes at 1.25× and cache reads at 0.1× the input rate. It's the API-equivalent value (on a subscription you don't pay per token); agents on the `default` model are priced as Sonnet.
+
+**Full work history per agent:**
+- The completions feed shows the 8 most recent finishes across the team; each agent's drawer now also has a **Completed work** section listing their entire outbox history.
 - A completions feed at the bottom shows recent finished work from every agent's outbox.
 
 **Launch agents from the office:**
@@ -220,6 +232,7 @@ All inboxes share the same shape — tasks go in `tasks`, everything else (resea
 
 **Notes:**
 - The server binds to `localhost` only (`http://localhost:4753`, change with `--port`). Never expose it — it can spawn processes.
+- Starting the office auto-opens a browser tab; pass `--no-open` to skip that (useful for scripts and restarts, so you don't accumulate tabs).
 - The terminal view uses xterm.js from a CDN, so it needs internet; everything else works offline.
 - Launching requires `node-pty` (installed automatically). If it can't build on your machine, the office falls back to view-only mode and tells you.
 - Each launched agent is a full Claude Code session on your Claude subscription — launch what you need, not the whole roster at once.

@@ -293,10 +293,11 @@
       <span onclick="openBossDrawer()" title="Rename project / edit goal" style="cursor:pointer;font-size:12px;opacity:.45;margin-left:2px">✏️</span></h1>
     <div class="goal" id="h-goal"></div>
     <div class="spacer"></div>
-    <div class="chip" id="h-tasks">📋 —</div>
+    <div class="chip" id="h-tasks" onclick="openTasksDrawer()" style="cursor:pointer" title="Open the task board">📋 —</div>
     <div class="chip" id="h-master">📄 MASTER —</div>
     <div class="chip" id="h-tokens" style="display:none">🪙 —</div>
     <div class="chip alert" id="h-questions" style="display:none" onclick="openBossDrawer()">❓ —</div>
+    <div class="chip" id="h-bell" onclick="toggleNotifications()" style="cursor:pointer" title="Desktop notifications for new questions and blocked agents">🔕</div>
   </header>
   <div class="offline" id="offline">⚠️ Lost connection to claude-team office server — is it still running?</div>
 
@@ -362,6 +363,21 @@ let term = null, termWs = null, fitAddon = null;
 let seenAgents = null;       // for walk-in animation on newly hired agents
 let removeConfirmName = null; // agent awaiting a second click to confirm removal
 let leavingAgent = null;      // agent mid walk-out — pauses grid re-render
+let prevQuestionIds = null;   // for notifications: unanswered question ids at last poll
+let prevBlocked = null;       // for notifications: blocked/paused agent names at last poll
+let notifyEnabled = localStorage.getItem('office-notify') === '1';
+
+// API-equivalent $ per MTok [input, output]; cache writes bill at 1.25× input,
+// cache reads at 0.1×. "default" is assumed Sonnet — it's an estimate either way.
+const PRICING = { opus: [5, 25], sonnet: [3, 15], haiku: [1, 5], default: [3, 15] };
+
+function costFor(u, model) {
+  if (!u) return 0;
+  const [inP, outP] = PRICING[model] || PRICING.default;
+  return (u.inputTokens * inP + u.outputTokens * outP
+        + u.cacheCreationTokens * 1.25 * inP + u.cacheReadTokens * 0.1 * inP) / 1e6;
+}
+function formatCost(c) { return c >= 10 ? `$${c.toFixed(0)}` : c >= 0.1 ? `$${c.toFixed(2)}` : `$${c.toFixed(3)}`; }
 
 function emojiFor(agent, idx) {
   return ROLE_EMOJI[agent.name] || WORKER_EMOJI[idx % WORKER_EMOJI.length];
@@ -434,10 +450,13 @@ function render() {
   document.getElementById('h-master').textContent = `📄 MASTER ${mPct}%`;
   const tokChip = document.getElementById('h-tokens');
   if (state.totalTeamTokens > 0) {
+    const teamCost = state.agents.reduce((sum, a) => sum + costFor(a.tokenUsage, a.model), 0);
     tokChip.style.display = '';
-    tokChip.textContent = `🪙 ${formatTokens(state.totalTeamTokens)} tokens used`;
-    tokChip.title = 'Real usage from launched agents\' session transcripts, cumulative across office runs';
+    tokChip.textContent = `🪙 ${formatTokens(state.totalTeamTokens)} tokens · ≈${formatCost(teamCost)}`;
+    tokChip.title = 'Real usage from launched agents\' session transcripts, cumulative across office runs. $ is the API-equivalent estimate (cache writes 1.25×, reads 0.1× input rate); "default" models priced as Sonnet.';
   } else tokChip.style.display = 'none';
+  document.getElementById('h-bell').textContent = notifyEnabled ? '🔔' : '🔕';
+  checkNotifications();
   const qChip = document.getElementById('h-questions');
   const nUnanswered = state.openQuestions.filter(q => !q.answered).length;
   if (nUnanswered > 0) {
@@ -475,6 +494,7 @@ function show(on) {
 function openDrawer(name) { detachTerminal(); drawerAgent = name; removeConfirmName = null; renderAgentDrawer(); show(true); }
 function openBossDrawer() { detachTerminal(); drawerAgent = 'BOSS'; renderBossDrawer(); show(true); }
 function openHireDrawer() { detachTerminal(); drawerAgent = 'HIRE'; renderHireDrawer(); show(true); }
+function openTasksDrawer() { detachTerminal(); drawerAgent = 'TASKS'; renderTasksDrawer(); show(true); }
 function closeDrawer() { detachTerminal(); drawerAgent = null; removeConfirmName = null; show(false); document.getElementById('drawer').classList.remove('wide'); }
 
 // Called every poll: refresh dynamic bits without destroying the terminal.
@@ -482,6 +502,7 @@ function syncDrawer() {
   if (!drawerAgent) return;
   if (drawerAgent === 'BOSS') return; // has forms — don't clobber user input
   if (drawerAgent === 'HIRE') return; // form — don't clobber user input
+  if (drawerAgent === 'TASKS') return; // has selects — refreshed after each action instead
   const a = state.agents.find(x => x.name === drawerAgent);
   if (!a) { closeDrawer(); return; }
   if (a.session !== drawerSession) { renderAgentDrawer(); return; } // session started/ended → rebuild
@@ -508,6 +529,7 @@ function statusHtml(a) {
     <br>Model: ${MODEL_LABEL[a.model] || esc(a.model)}
     <br>Context used: ${a.contextUsedPercent || 0}% (self-reported) · Memory doc: ${docPct}% of ${a.docBudget}t · Inbox: ${a.inboxCount}
     ${tokenUsageHtml(a.tokenUsage)}
+    ${a.tokenUsage?.total > 0 ? ` <span style="color:var(--dim)" title="API-equivalent estimate; cache writes 1.25×, reads 0.1× input rate">· ≈${formatCost(costFor(a.tokenUsage, a.model))}</span>` : ''}
     ${a.session === 'live' ? `<br>Auto-check: ${a.autoLoop ? `ON — nudged every ~${a.pollIntervalSeconds}s while idle` : 'OFF'}` : ''}
     ${a.lastUpdated ? `<br>Last update: ${new Date(a.lastUpdated).toLocaleString()}` : ''}`;
 }
@@ -589,6 +611,17 @@ function renderAgentDrawer() {
           <code>.claude-team/docs/agents/${esc(a.name)}.md</code>
         </div>
       </section>`}
+    ${a.completedWork?.length ? `
+      <section>
+        <h4>Completed work (${a.completedWork.length})</h4>
+        <div style="max-height:180px;overflow-y:auto">
+          ${a.completedWork.map(c => `
+            <div style="font-size:12px;margin-bottom:6px">
+              ✅ ${esc(c.title)}${c.summary ? ` <span style="color:var(--dim)">· ${esc(c.summary)}</span>` : ''}
+              ${c.completedAt ? `<span style="color:var(--dim)"> · ${new Date(c.completedAt).toLocaleString()}</span>` : ''}
+            </div>`).join('')}
+        </div>
+      </section>` : ''}
   `;
   if (live || ended) attachTerminal(a.name);
 }
@@ -653,6 +686,111 @@ function renderHireDrawer() {
     <div class="field"><label>Model</label><select id="hire-model">${modelOptionsHtml('sonnet')}</select></div>
     <button class="btn secondary" onclick="hire()">🤝 Hire</button>
     <div class="err" id="hire-err"></div>`;
+}
+
+// ── Task board ─────────────────────────────────────────
+const TASK_GROUPS = [
+  { label: '⚙️ In progress', match: ['in_progress', 'assigned', 'paused'] },
+  { label: '📥 Queued', match: ['queued', 'not_started'] },
+  { label: '✅ Done', match: ['done'] },
+  { label: '🚫 Cancelled', match: ['cancelled'] },
+];
+
+function taskRowHtml(t) {
+  const finished = ['done', 'cancelled'].includes(t.status);
+  const assignOptions = [
+    `<option value="" ${t.assignedTo === 'unassigned' ? 'selected' : ''}>unassigned</option>`,
+    ...state.agents.map(a => `<option value="${esc(a.name)}" ${a.name === t.assignedTo ? 'selected' : ''}>${esc(a.name)}</option>`),
+  ].join('');
+  return `
+  <div class="q" style="${finished ? 'opacity:.55' : ''}">
+    <div class="qid">${esc(t.id)} · ${esc(t.priority)}${t.status === 'paused' ? ' · ⏸ paused' : ''}</div>
+    <div>${esc(t.title)}</div>
+    ${t.description ? `<div style="font-size:12px;color:var(--dim);margin-top:2px">${esc(t.description)}</div>` : ''}
+    ${finished
+      ? `<div style="font-size:12px;color:var(--dim);margin-top:4px">${esc(t.assignedTo)}</div>`
+      : `<div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+          <select onchange="reassignTask('${esc(t.id)}', this.value)" style="font-size:12px;padding:3px 6px">${assignOptions}</select>
+          <button class="btn secondary" style="font-size:11px;padding:4px 8px" onclick="cancelTask('${esc(t.id)}')">🚫 Cancel</button>
+        </div>`}
+  </div>`;
+}
+
+function renderTasksDrawer() {
+  document.getElementById('drawer').classList.remove('wide');
+  const groups = TASK_GROUPS
+    .map(g => ({ ...g, tasks: state.tasks.filter(t => g.match.includes(t.status)) }))
+    .filter(g => g.tasks.length);
+  document.getElementById('drawer-body').innerHTML = `
+    <div class="d-emoji">📋</div>
+    <h2>Task board</h2>
+    <div class="d-role">Every task in master.json — reassign or cancel from here</div>
+    <div class="err" id="tasks-err"></div>
+    ${groups.length ? groups.map(g => `
+      <section style="margin-top:10px">
+        <h4>${g.label} (${g.tasks.length})</h4>
+        ${g.tasks.map(taskRowHtml).join('')}
+      </section>`).join('') : '<p style="font-size:13px">No tasks yet — hand one out from your desk drawer.</p>'}`;
+}
+
+async function reassignTask(id, assignTo) {
+  const err = document.getElementById('tasks-err');
+  try {
+    await post('/api/taskupdate', { id, assignTo: assignTo || undefined });
+    await poll();
+    renderTasksDrawer();
+  } catch (e) { if (err) err.textContent = e.message; }
+}
+
+async function cancelTask(id) {
+  const err = document.getElementById('tasks-err');
+  try {
+    await post('/api/taskupdate', { id, cancel: true });
+    await poll();
+    renderTasksDrawer();
+  } catch (e) { if (err) err.textContent = e.message; }
+}
+
+// ── Desktop notifications ──────────────────────────────
+function toggleNotifications() {
+  if (!('Notification' in window)) return;
+  if (notifyEnabled) {
+    notifyEnabled = false;
+  } else if (Notification.permission === 'granted') {
+    notifyEnabled = true;
+  } else {
+    Notification.requestPermission().then(p => {
+      notifyEnabled = p === 'granted';
+      localStorage.setItem('office-notify', notifyEnabled ? '1' : '0');
+      render();
+    });
+    return;
+  }
+  localStorage.setItem('office-notify', notifyEnabled ? '1' : '0');
+  render();
+}
+
+function checkNotifications() {
+  const questions = new Set(state.openQuestions.filter(q => !q.answered).map(q => q.id));
+  const blocked = new Set(state.agents.filter(a => ['blocked', 'paused'].includes(a.status)).map(a => a.name));
+  const firstPoll = prevQuestionIds === null;
+
+  if (!firstPoll && notifyEnabled && 'Notification' in window && Notification.permission === 'granted') {
+    for (const id of questions) {
+      if (!prevQuestionIds.has(id)) {
+        const q = state.openQuestions.find(x => x.id === id);
+        new Notification(`❓ ${id} from ${q?.from || 'team'}`, { body: q?.question || 'New question for you', icon: '/logo.svg' });
+      }
+    }
+    for (const name of blocked) {
+      if (!prevBlocked.has(name)) {
+        const a = state.agents.find(x => x.name === name);
+        new Notification(`🚧 ${name} is ${a?.status}`, { body: a?.blockedReason || (a?.status === 'paused' ? 'Token limit hit — respawn from the drawer' : 'Needs attention'), icon: '/logo.svg' });
+      }
+    }
+  }
+  prevQuestionIds = questions;
+  prevBlocked = blocked;
 }
 
 // ── Actions ────────────────────────────────────────────
