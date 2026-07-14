@@ -195,12 +195,13 @@ All inboxes share the same shape — tasks go in `tasks`, everything else (resea
 
 **Watch the team live:**
 - Every agent gets a desk with a character, status LED, live context-usage bar, and current task. Working agents type, blocked agents raise a red speech bubble, idle agents doze. Refreshes every 2 seconds straight from the `.claude-team/` files.
-- **Your desk** shows the team's open questions from `HUMAN_INPUT.md` as a red inbox badge — click it to read them.
+- **Your desk** shows the team's unanswered questions from `HUMAN_INPUT.md` as a red inbox badge — click it to read them and **answer right there**: your reply is written under the question's `HUMAN REPLY:` section (same as editing the file by hand) and the asker's inbox gets a `human_reply` message so they notice without polling the file.
+- Your desk drawer also has a **Hand out a task** form (title, description, priority, assignee). Tasks go to `queue.json` + `master.json`; assigning to a specific agent also delivers it straight to their inbox.
 - A completions feed at the bottom shows recent finished work from every agent's outbox.
 
 **Launch agents from the office:**
 - Every desk shows the agent's model (OPUS / SONNET / HAIKU / DEFAULT) under its role. Click a desk → pick a model (defaults to whatever's saved) → **▶ Launch agent** starts a real `claude --model <x>` session for that agent in a pseudo-terminal, with the kickoff prompt already sent. The desk gets a green **LIVE** tag, and the chosen model is remembered for next time.
-- The drawer shows the agent's **live terminal** (a real interactive session — type into it to approve permission prompts or give instructions), plus a **⏹ Stop** button.
+- The drawer shows the agent's **live terminal** (a real interactive session — type into it to approve permission prompts or give instructions), plus a **⏹ Stop** button. If a live agent reports `paused` (token limit hit), a **🔄 Respawn** button appears — it kills the stuck session and starts a fresh one with the same instructions and memory doc.
 - Sessions launched from the office end when you close the office (Ctrl+C). Agents you launched manually in your own terminals are untouched — the office only observes them.
 
 **Agents actually keep checking in — not just on paper:** ORCHESTRATOR.md describes a recurring loop ("every N seconds, re-check inboxes and assign tasks"), but a real CLI session doesn't repeat on its own — it does the work it's given and stops. Agents launched from the office now get that loop for real: while a session has been quiet (no output, and nobody's mid-keystroke in its terminal) for at least the project's configured poll interval, the office types a check-in prompt into it — "re-check your inbox/status/outboxes, then continue." This applies to every launched agent, not just the orchestrator, so workers also notice new inbox tasks without a human nudging them. It's on by default and toggleable per agent (**⏸ Pause auto-check** / **🔁 Resume**) in the drawer — pause it if you want to drive an agent by hand. Agents launched in a plain terminal don't get this; they're on their own to re-check, as before.
@@ -220,7 +221,7 @@ All inboxes share the same shape — tasks go in `tasks`, everything else (resea
 - Launching requires `node-pty` (installed automatically). If it can't build on your machine, the office falls back to view-only mode and tells you.
 - Each launched agent is a full Claude Code session on your Claude subscription — launch what you need, not the whole roster at once.
 - **First launch in a brand-new project directory**: Claude Code shows a one-time "do you trust this folder?" prompt before it does anything. The office can't detect or answer this for you yet (its exact on-screen text is rendered with per-word cursor-positioning codes that don't survive a simple text match) — if a freshly-launched agent looks stuck at "idle" and never does anything, open its terminal in the drawer and check.
-- Token totals reset when you restart the office — they're not persisted across runs.
+- Token totals are cumulative across office runs, persisted to `.claude-team/logs/token-usage.json`.
 
 ---
 
@@ -298,6 +299,32 @@ You can rename or replace any suggestion during the wizard, or pick "Custom" and
 ## Reusable Across Projects
 
 One local clone of claude-team works against any number of projects — run it (via whichever invocation from Install above) in any project's root and it generates a fresh team tailored to that project, with no shared or global state between projects. Nothing is hard-coded. Re-running init on an existing team asks for confirmation before overwriting anything.
+
+---
+
+## Pros, Cons & Limitations
+
+### Pros
+- **Everything is plain files.** The whole team — config, instructions, inboxes, statuses, docs — lives in `.claude-team/`. No daemon, no database, no lock-in: commit the folder and team state is versioned; delete it and claude-team is gone without a trace.
+- **Works on any project, any language.** Team definitions are markdown and JSON, not code hooks — a Rust repo, a blog, and a Node app all get the same treatment.
+- **Real token accounting.** Office-launched agents report exact input/output/cache token counts from Claude Code's own session transcripts, not self-reported estimates.
+- **One glance, whole team.** The office shows every agent's status, context bar, current task, and live terminal — plus the questions waiting on you.
+- **Project-local by design.** No global npm install, no PATH changes, no shared state between projects.
+- **Token budgets on docs** (agent memory 1500, MASTER.md 3000, RULES.md 800) keep agent context lean as the project grows.
+
+### Cons
+- **Coordination is file polling.** A few seconds of latency, and no file locking — two agents writing the same file in the same moment can clobber each other. Rare in practice, real in principle.
+- **Cost scales with team size.** Every agent is a full Claude Code session on your subscription — launch the agents you need, not the whole roster.
+- **Launched agents live and die with the office.** Ctrl+C on the office stops every session it started (manually-launched agents are unaffected).
+- **Some behaviors are heuristics, not guarantees.** The idle auto-check nudge and transcript correlation use sensible timing rules; e.g. two sessions starting in the same second could be matched to the wrong transcript.
+
+### Known limitations
+- **The trust-folder prompt needs a human.** The first-ever launch in a new project directory hits Claude Code's one-time "do you trust this folder?" prompt, and the session waits until someone answers it in the agent's terminal. The office can't reliably detect or answer it (see Notes in the Office section).
+- **Token usage only covers office-launched agents.** Sessions you start in your own terminal can't be correlated to a transcript, so their usage never shows up in the totals.
+- **Terminal view needs internet.** xterm.js loads from a CDN; everything else works offline.
+- **Single machine, localhost only, no auth.** The office server binds to `127.0.0.1` and must never be exposed — it can spawn processes.
+- **Removal doesn't rewrite history.** Firing an agent archives their memory doc and requeues their unfinished tasks, but past outbox entries, changelog lines, and doc mentions of them stay as written.
+- **Recovery for `paused` agents is one click, not automatic.** An agent that hits its token limit stays paused until you press 🔄 Respawn in its drawer (or relaunch it yourself) — the office never restarts sessions on its own.
 
 ---
 

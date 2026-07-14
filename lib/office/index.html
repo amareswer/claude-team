@@ -276,7 +276,8 @@
   .term-note { font-size: 12px; color: var(--dim); margin-top: 6px; }
   .field { margin-bottom: 12px; }
   .field label { display: block; font-size: 12px; font-weight: 700; margin-bottom: 4px; }
-  .field input, .field select {
+  .field textarea { resize: vertical; font-family: inherit; }
+  .field input, .field select, .field textarea {
     width: 100%; padding: 8px 10px; border: 1px solid #d6cfc0;
     border-radius: 8px; font-size: 13px; background: #fff;
   }
@@ -433,12 +434,13 @@ function render() {
   if (state.totalTeamTokens > 0) {
     tokChip.style.display = '';
     tokChip.textContent = `🪙 ${formatTokens(state.totalTeamTokens)} tokens used`;
-    tokChip.title = 'Real usage from launched agents\' session transcripts, this office run only';
+    tokChip.title = 'Real usage from launched agents\' session transcripts, cumulative across office runs';
   } else tokChip.style.display = 'none';
   const qChip = document.getElementById('h-questions');
-  if (state.openQuestions.length > 0) {
+  const nUnanswered = state.openQuestions.filter(q => !q.answered).length;
+  if (nUnanswered > 0) {
     qChip.style.display = '';
-    qChip.textContent = `❓ ${state.openQuestions.length} question${state.openQuestions.length > 1 ? 's' : ''} for you`;
+    qChip.textContent = `❓ ${nUnanswered} question${nUnanswered > 1 ? 's' : ''} for you`;
   } else qChip.style.display = 'none';
 
   const firstRender = seenAgents === null;
@@ -448,7 +450,7 @@ function render() {
   const leadership = state.agents.filter(a => a.isLeadership);
   const workers = state.agents.filter(a => !a.isLeadership);
   document.getElementById('leadership').innerHTML =
-    bossDeskHtml(state.openQuestions.length) + leadership.map((a, i) => deskHtml(a, i, isNew(a))).join('');
+    bossDeskHtml(nUnanswered) + leadership.map((a, i) => deskHtml(a, i, isNew(a))).join('');
   document.getElementById('workers').innerHTML =
     workers.map((a, i) => deskHtml(a, i, isNew(a))).join('') + hireDeskHtml();
   state.agents.forEach(a => seenAgents.add(a.name));
@@ -476,7 +478,7 @@ function closeDrawer() { detachTerminal(); drawerAgent = null; removeConfirmName
 // Called every poll: refresh dynamic bits without destroying the terminal.
 function syncDrawer() {
   if (!drawerAgent) return;
-  if (drawerAgent === 'BOSS') { renderBossDrawer(); return; }
+  if (drawerAgent === 'BOSS') return; // has forms — don't clobber user input
   if (drawerAgent === 'HIRE') return; // form — don't clobber user input
   const a = state.agents.find(x => x.name === drawerAgent);
   if (!a) { closeDrawer(); return; }
@@ -488,7 +490,7 @@ function syncDrawer() {
 function tokenUsageHtml(u) {
   if (!u) return '';
   if (u.total > 0) {
-    return `<br>🪙 Tokens used: ${formatTokens(u.total)} <span style="color:var(--dim)">(in ${formatTokens(u.inputTokens)} · out ${formatTokens(u.outputTokens)} · cache write ${formatTokens(u.cacheCreationTokens)} · cache read ${formatTokens(u.cacheReadTokens)})</span>`;
+    return `<br>🪙 Tokens used (all office runs): ${formatTokens(u.total)} <span style="color:var(--dim)">(in ${formatTokens(u.inputTokens)} · out ${formatTokens(u.outputTokens)} · cache write ${formatTokens(u.cacheCreationTokens)} · cache read ${formatTokens(u.cacheReadTokens)})</span>`;
   }
   if (u.transcriptGaveUp) return `<br>🪙 Tokens used: unavailable <span style="color:var(--dim)">(couldn't find this session's transcript)</span>`;
   return `<br>🪙 Tokens used: detecting session…`;
@@ -539,6 +541,7 @@ function renderAgentDrawer() {
         ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn stop" onclick="stopAgent('${esc(a.name)}')">⏹ Stop session</button>
             <button class="btn secondary" onclick="toggleAutoLoop('${esc(a.name)}', ${!a.autoLoop})">${a.autoLoop ? '⏸ Pause auto-check' : '🔁 Resume auto-check'}</button>
+            ${a.status === 'paused' ? `<button class="btn" onclick="respawnAgent('${esc(a.name)}')">🔄 Respawn</button>` : ''}
            </div>`
         : state.canLaunch
           ? `
@@ -590,20 +593,41 @@ function renderAgentDrawer() {
 
 function renderBossDrawer() {
   document.getElementById('drawer').classList.remove('wide');
+  const unanswered = state.openQuestions.filter(q => !q.answered);
+  const answered = state.openQuestions.filter(q => q.answered);
   document.getElementById('drawer-body').innerHTML = `
     <div class="d-emoji">🧔</div>
     <h2>Your Inbox</h2>
     <div class="d-role">Questions the team needs you to answer</div>
-    ${state.openQuestions.length ? state.openQuestions.map(q => `
+    ${unanswered.length ? unanswered.map(q => `
       <div class="q">
         <div class="qid">${esc(q.id)} · from ${esc(q.from)} · ${esc(q.priority)}</div>
         <div>${esc(q.question)}</div>
+        <div class="field" style="margin-top:8px">
+          <textarea id="ans-${esc(q.id)}" rows="3" placeholder="Type your answer…"></textarea>
+        </div>
+        <button class="btn secondary" onclick="answerQuestion('${esc(q.id)}')">✉️ Send answer</button>
       </div>`).join('') : '<p style="font-size:13px">Nothing waiting on you. ☕</p>'}
+    ${answered.length ? `<p style="font-size:12px;color:var(--dim)">${answered.map(q => `✅ ${esc(q.id)} answered — waiting for the team to action it`).join('<br>')}</p>` : ''}
+    <div class="err" id="boss-err"></div>
     <section style="margin-top:14px">
-      <h4>How to answer</h4>
-      <pre>Open .claude-team/HUMAN_INPUT.md,
-write your reply under "HUMAN REPLY:",
-and save the file.</pre>
+      <h4>Hand out a task</h4>
+      <div class="field"><label>Title</label><input id="task-title" placeholder="e.g. Add login page"></div>
+      <div class="field"><label>Description</label><textarea id="task-desc" rows="3" placeholder="What needs doing, and what does done look like?"></textarea></div>
+      <div class="field"><label>Priority</label><select id="task-prio"><option>high</option><option selected>medium</option><option>low</option></select></div>
+      <div class="field"><label>Assign to</label><select id="task-assign">
+        <option value="">unassigned — orchestrator decides</option>
+        ${state.agents.map(a => `<option value="${esc(a.name)}">${esc(a.name)} (${esc(a.role)})</option>`).join('')}
+      </select></div>
+      <button class="btn secondary" onclick="createTask()">📋 Add task</button>
+      <div class="err" id="task-err"></div>
+      <div id="task-ok" style="font-size:12px;color:#2e7d32;margin-top:4px"></div>
+    </section>
+    <section style="margin-top:14px">
+      <h4>Prefer the file?</h4>
+      <pre>Answers land under "HUMAN REPLY:" in
+.claude-team/HUMAN_INPUT.md — editing
+that file by hand still works too.</pre>
     </section>`;
 }
 
@@ -641,6 +665,39 @@ async function launchAgent(name) {
 async function stopAgent(name) {
   const err = document.getElementById('d-err');
   try { await post('/api/stop', { agent: name }); } catch (e) { if (err) err.textContent = e.message; }
+}
+
+// Fresh session for a paused (token-limit-hit) agent — kills the stuck one.
+async function respawnAgent(name) {
+  const err = document.getElementById('d-err');
+  try { await post('/api/respawn', { agent: name }); await poll(); renderAgentDrawer(); }
+  catch (e) { if (err) err.textContent = e.message; }
+}
+
+async function answerQuestion(id) {
+  const err = document.getElementById('boss-err');
+  try {
+    const answer = document.getElementById('ans-' + id).value;
+    await post('/api/answer', { id, answer });
+    await poll();
+    renderBossDrawer();
+  } catch (e) { if (err) err.textContent = e.message; }
+}
+
+async function createTask() {
+  const err = document.getElementById('task-err');
+  try {
+    const { id } = await post('/api/task', {
+      title: document.getElementById('task-title').value,
+      description: document.getElementById('task-desc').value,
+      priority: document.getElementById('task-prio').value,
+      assignTo: document.getElementById('task-assign').value || undefined,
+    });
+    await poll();
+    renderBossDrawer(); // clears the form for the next task
+    const ok = document.getElementById('task-ok');
+    if (ok) ok.textContent = `${id} added.`;
+  } catch (e) { if (err) err.textContent = e.message; }
 }
 
 async function toggleAutoLoop(name, enabled) {
