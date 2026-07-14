@@ -98,6 +98,13 @@
     from { transform: translateX(-220%) ; opacity: 0; }
     to   { transform: translateX(-50%); opacity: 1; }
   }
+  .desk.leave .person { animation: walkout .7s ease-in forwards; }
+  @keyframes walkout {
+    from { transform: translateX(-50%); opacity: 1; }
+    to   { transform: translateX(220%); opacity: 0; }
+  }
+  .desk.leave { animation: deskfade .35s ease .6s forwards; }
+  @keyframes deskfade { to { opacity: 0; } }
 
   .person {
     font-size: 40px;
@@ -351,6 +358,7 @@ let drawerSession = null;    // session value at last drawer render (to detect c
 let term = null, termWs = null, fitAddon = null;
 let seenAgents = null;       // for walk-in animation on newly hired agents
 let removeConfirmName = null; // agent awaiting a second click to confirm removal
+let leavingAgent = null;      // agent mid walk-out — pauses grid re-render
 
 function emojiFor(agent, idx) {
   return ROLE_EMOJI[agent.name] || WORKER_EMOJI[idx % WORKER_EMOJI.length];
@@ -366,7 +374,7 @@ function deskHtml(agent, idx, arrive) {
   const ctx = agent.contextUsedPercent || 0;
   const ctxClass = ctx >= 85 ? 'hot' : ctx >= 70 ? 'warn' : '';
   return `
-  <div class="desk ${st} ${arrive ? 'arrive' : ''}" onclick="openDrawer('${esc(agent.name)}')">
+  <div class="desk ${st} ${arrive ? 'arrive' : ''}" data-agent="${esc(agent.name)}" onclick="openDrawer('${esc(agent.name)}')">
     <div class="person">${emojiFor(agent, idx)}
       ${bubble ? `<div class="bubble ${bubble.red ? 'red' : ''}">${bubble.text}</div>` : ''}
     </div>
@@ -414,6 +422,7 @@ function hireDeskHtml() {
 // ── Render loop ────────────────────────────────────────
 function render() {
   if (!state) return;
+  if (leavingAgent) return; // don't repaint mid walk-out — it would cancel the animation
   document.getElementById('h-project').textContent = state.projectName;
   document.getElementById('h-goal').textContent = state.projectGoal;
   const t = state.taskSummary;
@@ -545,7 +554,7 @@ function renderAgentDrawer() {
     <section>
       ${removeConfirmName === a.name
         ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span style="font-size:13px">Remove ${esc(a.name)} and delete their files?</span>
+            <span style="font-size:13px">Remove ${esc(a.name)}? Their memory doc is archived and unfinished tasks are requeued.</span>
             <button class="btn stop" onclick="removeAgent('${esc(a.name)}')">Yes, remove</button>
             <button class="btn secondary" onclick="cancelRemove()">Cancel</button>
            </div>`
@@ -643,13 +652,27 @@ async function toggleAutoLoop(name, enabled) {
 function askRemove(name) { removeConfirmName = name; renderAgentDrawer(); }
 function cancelRemove() { removeConfirmName = null; renderAgentDrawer(); }
 async function removeAgent(name) {
-  const err = document.getElementById('d-err');
+  removeConfirmName = null;
+  const desk = document.querySelector(`.desk[data-agent="${CSS.escape(name)}"]`);
+  if (desk) {
+    // Close the drawer first so the walk-out is visible, then let the
+    // animation finish before the desk actually goes away.
+    leavingAgent = name;
+    closeDrawer();
+    desk.classList.add('leave');
+    await new Promise(r => setTimeout(r, 950));
+  }
   try {
     await post('/api/remove', { agent: name });
-    removeConfirmName = null;
-    closeDrawer();
+    leavingAgent = null;
     await poll();
-  } catch (e) { if (err) err.textContent = e.message; }
+  } catch (e) {
+    leavingAgent = null;
+    desk?.classList.remove('leave');
+    openDrawer(name);
+    const err = document.getElementById('d-err');
+    if (err) err.textContent = e.message;
+  }
 }
 
 async function hire() {
