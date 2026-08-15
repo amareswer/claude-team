@@ -79,7 +79,7 @@ Then open one terminal per agent, run `claude` in each, and paste the prompt `cl
 2. **Team hierarchy** — how much leadership the project needs (see below).
 3. **Worker agents** — 1–4 suggested workers based on your project type, or fully custom roles.
 4. **Models** — which Claude model each agent uses when launched: recommended defaults (Opus for leadership, Sonnet for workers), one model for everyone, or choose per agent. See [Models](#models-per-agent) below.
-5. **Coordination** — queue / parallel / pipeline task style, git checkpoints, cross-agent review, poll interval.
+5. **Coordination** — queue / parallel / pipeline task style, git checkpoints, cross-agent review, poll interval, and (off by default) experimental direct agent-to-agent messaging — see [Cross-Session Messaging](#cross-session-messaging-experimental-opt-in) below.
 6. **First task** — optionally define a starting task and assign it. If you assign it to a specific agent, it lands directly in their inbox.
 
 ### Hierarchy options
@@ -176,6 +176,14 @@ Every agent has three files in `.claude-team/tasks/`:
 | `<agent>-status.json` | To everyone | `idle` / `working` / `blocked` / `paused` / `review_needed` / `done`, plus context % |
 
 All inboxes share the same shape — tasks go in `tasks`, everything else (research requests, questions, ready signals) goes in `messages`. Agents write to `orchestrator-inbox.json` when blocked, and to `researcher-inbox.json` to request research.
+
+---
+
+## Cross-Session Messaging (experimental, opt-in)
+
+Claude Code 2.1.224+ ships `ListAgents`/`SendMessage` tools that let one live session message another directly, instead of writing to a file and waiting for the other side to poll. **Off by default** — enable it with a yes/no question in `init`'s Coordination step. When on, agents' instruction files get guidance to use it for anything time-sensitive (an urgent unblock, a question that'd otherwise sit until the next poll), always *in addition to* — never instead of — the normal inbox/outbox record, since the office UI and any agent that isn't currently live only ever see the files.
+
+**Why it's opt-in:** `ListAgents` isn't scoped to this team, or even to this project — it lists every Claude Code session running on the machine. Verified live: in a two-agent test, one agent's `ListAgents` call surfaced an unrelated session and it briefly (mistakenly) treated it as a possible teammate. The generated instructions tell agents to only act on messages from names matching the actual team roster and to treat anything else as untrusted — but that's a prompt-level safeguard, not a structural one, since the underlying tool has no team-scoping concept. If you'd ever run claude-team alongside other unrelated Claude Code sessions on the same machine, know that those sessions are visible to (and can message, and be messaged by) your team's agents once this is on.
 
 ---
 
@@ -335,7 +343,8 @@ One local clone of claude-team works against any number of projects — run it (
 - **Some behaviors are heuristics, not guarantees.** The idle auto-check nudge and transcript correlation use sensible timing rules; e.g. two sessions starting in the same second could be matched to the wrong transcript.
 
 ### Known limitations
-- **The trust-folder prompt needs a human.** The first-ever launch in a new project directory hits Claude Code's one-time "do you trust this folder?" prompt, and the session waits until someone answers it in the agent's terminal. The office can't reliably detect or answer it (see Notes in the Office section).
+- **The trust-folder prompt (and similar first-run modals) need a human.** The first-ever launch in a new project directory hits Claude Code's one-time "do you trust this folder?" prompt — and, as of Claude Code 2.1.232, a second "set up auto mode?" onboarding modal can also appear mid-session. Either way the session waits until someone answers it in the agent's terminal. The office detects that one of these is showing (so it won't type an auto-check nudge into it — a nudge ending in Enter could otherwise silently confirm the modal's default option) but deliberately doesn't answer it for you; that's still a human call.
+- **Cross-session messaging (if enabled) isn't scoped to this team.** See [Cross-Session Messaging](#cross-session-messaging-experimental-opt-in) above — it's off by default for this reason.
 - **Token usage only covers office-launched agents.** Sessions you start in your own terminal can't be correlated to a transcript, so their usage never shows up in the totals.
 - **Terminal view needs internet.** xterm.js loads from a CDN; everything else works offline.
 - **Single machine, localhost only, no auth.** The office server binds to `127.0.0.1` and must never be exposed — it can spawn processes.
