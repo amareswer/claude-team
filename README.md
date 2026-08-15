@@ -212,8 +212,11 @@ Claude Code 2.1.224+ ships `ListAgents`/`SendMessage` tools that let one live se
 **Task board:**
 - Click the 📋 task chip in the header to open the board — every task from `master.json` grouped by state (in progress / queued / done / cancelled). Each open task has an assignee dropdown (reassigning moves it between inboxes, so two agents never hold the same work) and a 🚫 Cancel button. Done and cancelled tasks are read-only history.
 
+**"Needs you" indicator:**
+- If an agent's terminal is showing a modal waiting on a human (the trust-folder prompt, or Claude Code's onboarding "set up auto mode?" question), its desk gets a pulsing **🔒 needs you** badge and its drawer explains what's blocking it — even though the agent's own self-reported status can't reflect this yet (it hasn't started its turn). Open the drawer's live terminal to answer the prompt directly; the badge clears automatically once you do.
+
 **Desktop notifications:**
-- The 🔕/🔔 chip in the header toggles browser notifications: you get pinged when a new question lands in your inbox or an agent becomes blocked/paused — useful while the office tab is in the background. Uses the browser's Notification permission; nothing is sent anywhere.
+- The 🔕/🔔 chip in the header toggles browser notifications: you get pinged when a new question lands in your inbox, an agent becomes blocked/paused, or an agent needs you at a terminal prompt — useful while the office tab is in the background. Uses the browser's Notification permission; nothing is sent anywhere.
 
 **What did it cost?**
 - Token chips show an **≈ $ estimate** next to the counts (header team total and per-agent in the drawer), computed from exact token counts at each agent's model's API rates — cache writes at 1.25× and cache reads at 0.1× the input rate. It's the API-equivalent value (on a subscription you don't pay per token); agents on the `default` model are priced as Sonnet.
@@ -343,7 +346,7 @@ One local clone of claude-team works against any number of projects — run it (
 - **Some behaviors are heuristics, not guarantees.** The idle auto-check nudge and transcript correlation use sensible timing rules; e.g. two sessions starting in the same second could be matched to the wrong transcript.
 
 ### Known limitations
-- **The trust-folder prompt (and similar first-run modals) need a human.** The first-ever launch in a new project directory hits Claude Code's one-time "do you trust this folder?" prompt — and, as of Claude Code 2.1.232, a second "set up auto mode?" onboarding modal can also appear mid-session. Either way the session waits until someone answers it in the agent's terminal. The office detects that one of these is showing (so it won't type an auto-check nudge into it — a nudge ending in Enter could otherwise silently confirm the modal's default option) but deliberately doesn't answer it for you; that's still a human call.
+- **The trust-folder prompt (and similar first-run modals) need a human.** The first-ever launch in a new project directory hits Claude Code's one-time "do you trust this folder?" prompt — and, as of Claude Code 2.1.232, a second "set up auto mode?" onboarding modal can also appear mid-session. Either way the session waits until someone answers it in the agent's terminal. The office detects that one of these is showing — it won't type an auto-check nudge into it (a nudge ending in Enter could otherwise silently confirm the modal's default option), and the desk gets a pulsing **🔒 needs you** badge plus a desktop notification if enabled — but deliberately doesn't answer it for you; that's still a human call, made from the desk's live terminal.
 - **Cross-session messaging (if enabled) isn't scoped to this team.** See [Cross-Session Messaging](#cross-session-messaging-experimental-opt-in) above — it's off by default for this reason.
 - **Token usage only covers office-launched agents.** Sessions you start in your own terminal can't be correlated to a transcript, so their usage never shows up in the totals.
 - **Terminal view needs internet.** xterm.js loads from a CDN; everything else works offline.

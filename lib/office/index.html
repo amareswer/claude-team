@@ -120,6 +120,8 @@
   @keyframes typing { from { transform: translateX(-50%) translateY(0); } to { transform: translateX(-50%) translateY(-4px); } }
   .desk.blocked .person, .desk.paused .person { animation: shake 2.4s infinite; }
   @keyframes shake { 0%,90%,100% { transform: translateX(-50%); } 93% { transform: translateX(-56%); } 96% { transform: translateX(-44%); } }
+  .desk.needs-prompt .person { animation: pulse-glow 1.6s infinite; }
+  @keyframes pulse-glow { 0%,100% { filter: drop-shadow(0 3px 3px rgba(0,0,0,.25)); } 50% { filter: drop-shadow(0 0 8px var(--yellow)); } }
 
   .bubble {
     position: absolute;
@@ -204,6 +206,7 @@
     display: flex; align-items: center; justify-content: center;
     z-index: 4; box-shadow: 0 2px 5px rgba(0,0,0,.3);
   }
+  .badge.attention { background: var(--yellow); width: auto; height: auto; border-radius: 10px; padding: 3px 7px; font-size: 11px; }
 
   /* ── Activity feed ──────────────────────────────────── */
   .feed {
@@ -365,6 +368,7 @@ let removeConfirmName = null; // agent awaiting a second click to confirm remova
 let leavingAgent = null;      // agent mid walk-out — pauses grid re-render
 let prevQuestionIds = null;   // for notifications: unanswered question ids at last poll
 let prevBlocked = null;       // for notifications: blocked/paused agent names at last poll
+let prevNeedsPrompt = null;   // for notifications: agents waiting on a terminal prompt at last poll
 let notifyEnabled = localStorage.getItem('office-notify') === '1';
 
 // API-equivalent $ per MTok [input, output]; cache writes bill at 1.25× input,
@@ -389,14 +393,19 @@ function esc(s) {
 // ── Desks ──────────────────────────────────────────────
 function deskHtml(agent, idx, arrive) {
   const st = agent.status in STATUS_LABEL ? agent.status : 'unknown';
-  const bubble = BUBBLES[st];
+  // needsHumanPrompt reflects what's literally on screen right now (a modal
+  // waiting on a keystroke) — it can be true even while the agent's own
+  // status file still says "working", since it can't update that file
+  // mid-modal. Takes priority over the self-reported bubble when true.
+  const bubble = agent.needsHumanPrompt ? { text: '🔒 needs you', red: false } : BUBBLES[st];
   const ctx = agent.contextUsedPercent || 0;
   const ctxClass = ctx >= 85 ? 'hot' : ctx >= 70 ? 'warn' : '';
   return `
-  <div class="desk ${st} ${arrive ? 'arrive' : ''}" data-agent="${esc(agent.name)}" onclick="openDrawer('${esc(agent.name)}')">
+  <div class="desk ${st} ${agent.needsHumanPrompt ? 'needs-prompt' : ''} ${arrive ? 'arrive' : ''}" data-agent="${esc(agent.name)}" onclick="openDrawer('${esc(agent.name)}')">
     <div class="person">${emojiFor(agent, idx)}
       ${bubble ? `<div class="bubble ${bubble.red ? 'red' : ''}">${bubble.text}</div>` : ''}
     </div>
+    ${agent.needsHumanPrompt ? `<div class="badge attention" title="Waiting on a prompt in the live terminal — open the drawer and answer it there">🔒 needs you</div>` : ''}
     <div class="desk-top">🖥️${agent.session === 'live' ? '<span class="live-tag">LIVE</span>' : ''}</div>
     <div class="nameplate">
       <div class="name">${esc(agent.name)}</div>
@@ -523,6 +532,7 @@ function statusHtml(a) {
   const docPct = Math.round((a.docTokens / a.docBudget) * 100);
   return `
     ${STATUS_LABEL[a.status] || esc(a.status)}
+    ${a.needsHumanPrompt ? `<br>🔒 <strong>Waiting on you</strong> — a prompt is showing in the live terminal below (trust-folder confirmation, or a setup question). The office won't auto-check-in past it; answer it in the terminal to unblock this session.` : ''}
     ${a.currentTaskTitle ? `<br>📌 ${esc(a.currentTaskTitle)}` : ''}
     ${a.currentPhase ? `<br>Phase: ${esc(a.currentPhase)}` : ''}
     ${a.blockedReason ? `<br>🚧 ${esc(a.blockedReason)}` : ''}
@@ -773,6 +783,7 @@ function toggleNotifications() {
 function checkNotifications() {
   const questions = new Set(state.openQuestions.filter(q => !q.answered).map(q => q.id));
   const blocked = new Set(state.agents.filter(a => ['blocked', 'paused'].includes(a.status)).map(a => a.name));
+  const needsPrompt = new Set(state.agents.filter(a => a.needsHumanPrompt).map(a => a.name));
   const firstPoll = prevQuestionIds === null;
 
   if (!firstPoll && notifyEnabled && 'Notification' in window && Notification.permission === 'granted') {
@@ -788,9 +799,15 @@ function checkNotifications() {
         new Notification(`🚧 ${name} is ${a?.status}`, { body: a?.blockedReason || (a?.status === 'paused' ? 'Token limit hit — respawn from the drawer' : 'Needs attention'), icon: '/logo.svg' });
       }
     }
+    for (const name of needsPrompt) {
+      if (!prevNeedsPrompt.has(name)) {
+        new Notification(`🔒 ${name} needs you`, { body: 'A prompt is showing in its live terminal — open the drawer to answer it.', icon: '/logo.svg' });
+      }
+    }
   }
   prevQuestionIds = questions;
   prevBlocked = blocked;
+  prevNeedsPrompt = needsPrompt;
 }
 
 // ── Actions ────────────────────────────────────────────
