@@ -9,7 +9,8 @@
   "main": "lib/cli.js",
   "scripts": {
     "start": "node bin/claude-team.js",
-    "dev": "node bin/claude-team.js"
+    "dev": "node bin/claude-team.js",
+    "test": "vitest run"
   },
   "keywords": [
     "claude",
@@ -34,5 +35,8 @@
   },
   "allowScripts": {
     "node-pty@1.1.0": true
+  },
+  "devDependencies": {
+    "vitest": "^4.1.11"
   }
 }

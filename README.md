@@ -179,6 +179,26 @@ All inboxes share the same shape — tasks go in `tasks`, everything else (resea
 
 ---
 
+## Concurrency & Locking
+
+Every shared coordination file — inboxes, outboxes, status files, `MASTER.md`, `tasks/master.json`, `tasks/queue.json`, `config.json`, `HUMAN_INPUT.md` — can be read-modify-written by more than one actor: two agents, an agent and the office server, or the office and a CLI command, all in the same few seconds. Without coordination, a classic race applies: both read the old contents, both mutate their own in-memory copy, and whichever writes last silently erases the other's change.
+
+claude-team guards every such read-modify-write with a plain file lock — no daemon, no new dependency, consistent with the rest of the project being "just files":
+
+- **The lock is a sentinel file**, `<file>.lock`, created next to the file it protects (e.g. `tasks/backend-inbox.json.lock`). It's created exclusively — the create fails if the file already exists — and holds JSON: `{ "pid": <holder's process id>, "acquiredAt": <ISO timestamp> }`.
+- **A writer holds the lock only for the read-modify-write itself**: acquire → read the current file → apply the change → write it back → release. Nothing else waits on it.
+- **Contention retries with backoff** — up to a 5-second timeout, with jittered exponential backoff between attempts (starting at 50ms, capped at 400ms), so a burst of concurrent writers drains without a thundering herd.
+- **A stale lock is taken over, not waited out.** If the PID in the lock file is no longer running (checked with a signal-0 probe) — or the lock is simply older than 30 seconds, e.g. the holder crashed mid-write — the next writer deletes it and proceeds immediately, instead of blocking for the full timeout on a lock nobody's coming back for.
+- **Only genuine contention times out.** If a lock is both live and fresh for the full 5 seconds, `acquireLock` throws rather than hanging forever.
+
+This lives in `lib/lock.js` (the primitive: `withLock(filePath, fn)`) and `lib/jsonStore.js` (the common case: `updateJson(filePath, mutate, fallback)` — read, mutate, write, all under one lock). Every read-modify-write on a shared file in `lib/add.js`, `lib/config.js`, and `lib/office.js` goes through one of these. Plain reads (status displays, the office's polling `/api/state`) aren't locked — only writes that follow a read of the same file are, since those are the ones a race can corrupt.
+
+**What this does and doesn't fix:** it eliminates lost updates on a single file — two agents delivering a task to the same inbox in the same instant both land, instead of one clobbering the other (verified with a 15-way concurrent write test; see the PR/commit history for the harness). It does not make a multi-file operation (e.g. moving a task from one inbox to another) atomic across files — a crash between the two writes can still leave a task in a partial state, same as before. That's an acceptable gap for a human-in-the-loop tool: worst case, `claude-team status` or the office shows something slightly off until the next write true's it up.
+
+**The gap the file lock can't close:** a lock only protects a single read-then-write pair. It doesn't help when the orchestrator reads `MASTER.md` at the start of a cycle, spends several turns assigning tasks, and only writes it back minutes later — nothing stops another agent or the human from having changed it in between. `ORCHESTRATOR.md` (generated per-project by `lib/generators/orchestrator.js`) bakes in a session-level protocol for exactly that: before writing back to a shared file, the orchestrator re-checks a fingerprint it took when it first read the file; on a mismatch it stops, logs a `CONFLICT` line to `changelog.md`, notifies every affected agent's inbox with a `"type": "conflict"` message, and re-reads + re-applies its change on the current contents instead of overwriting blind. See that file's "🔒 Conflict Detection Protocol" section for the exact steps.
+
+---
+
 ## Cross-Session Messaging (experimental, opt-in)
 
 Claude Code 2.1.224+ ships `ListAgents`/`SendMessage` tools that let one live session message another directly, instead of writing to a file and waiting for the other side to poll. **Off by default** — enable it with a yes/no question in `init`'s Coordination step. When on, agents' instruction files get guidance to use it for anything time-sensitive (an urgent unblock, a question that'd otherwise sit until the next poll), always *in addition to* — never instead of — the normal inbox/outbox record, since the office UI and any agent that isn't currently live only ever see the files.
@@ -340,7 +360,7 @@ One local clone of claude-team works against any number of projects — run it (
 - **Token budgets on docs** (agent memory 1500, MASTER.md 3000, RULES.md 800) keep agent context lean as the project grows.
 
 ### Cons
-- **Coordination is file polling.** A few seconds of latency, and no file locking — two agents writing the same file in the same moment can clobber each other. Rare in practice, real in principle.
+- **Coordination is file polling.** A few seconds of latency is inherent to that — file writes themselves are lock-protected (see [Concurrency & Locking](#concurrency--locking)), so concurrent writers no longer clobber each other, but a multi-file move (e.g. reassigning a task between inboxes) still isn't atomic across the whole operation.
 - **Cost scales with team size.** Every agent is a full Claude Code session on your subscription — launch the agents you need, not the whole roster.
 - **Launched agents live and die with the office.** Ctrl+C on the office stops every session it started (manually-launched agents are unaffected).
 - **Some behaviors are heuristics, not guarantees.** The idle auto-check nudge and transcript correlation use sensible timing rules; e.g. two sessions starting in the same second could be matched to the wrong transcript.
