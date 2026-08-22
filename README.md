@@ -2,8 +2,11 @@
 
 <h1 align="center">claude-team</h1>
 
-**Multi-agent coordination CLI for Claude Code**
-Build a team of Claude Code instances that collaborate on any project — technical or content — with role hierarchy, two-way task coordination, token safety, living documentation, and a built-in channel for talking to you (the human).
+claude-team is a git-committable, resumable project-memory layer for multi-day Claude Code projects. A team's full state — role instructions, task inboxes/outboxes, status files, and living docs (`MASTER.md`, `RULES.md`, `decisions.md`, `changelog.md`) — lives entirely as plain files under `.claude-team/`, committed alongside your code. Close every terminal and come back a week later: the docs and task state are still there, exactly as they were last written.
+
+This is not the same thing as Claude Code's built-in Agent Teams feature, which coordinates multiple agents live within a single session — that's scoped to the session it runs in, with no persistent doc layer that survives after it ends. claude-team instead generates a standing set of instruction files and coordination state on disk that any number of separate `claude` sessions — run today, tomorrow, or next week — read from and write back to.
+
+It's also not a GUI or office-simulation desktop app like Munder Difflin. The optional `claude-team office` view is a thin, read/write layer over the same `.claude-team/` files, not a separate application with its own state — no Electron, no daemon. Delete `.claude-team/` and claude-team is gone without a trace.
 
 ---
 
