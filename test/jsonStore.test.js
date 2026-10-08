@@ -200,7 +200,7 @@ describe('updateJson corruption safety', () => {
     const file = path.join(dir, 'new.json');
     await updateJson(file, (d) => { d.tasks.push(1); }, () => ({ tasks: [] }));
     expect(await fs.readJson(file)).toEqual({ tasks: [1] });
-    expect((await fs.readdir(dir)).filter((f) => f.endsWith('.tmp') || f.endsWith('.lock'))).toEqual([]);
+    expect((await fs.readdir(dir)).filter((f) => f.endsWith('.tmp') || f.includes('.lock'))).toEqual([]);
   });
 });
 
