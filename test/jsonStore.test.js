@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'fs-extra';
 import os from 'os';
 import path from 'path';
-import { moveTask, reconcileDuplicateTasks } from '../lib/jsonStore.js';
+import { moveTask, reconcileDuplicateTasks, updateJson } from '../lib/jsonStore.js';
 import { withTempCwd } from './helpers.js';
 
 let tmpDirs = [];
@@ -78,7 +78,7 @@ describe('moveTask', () => {
     // write throw.
     const originalWriteJson = fs.writeJson.bind(fs);
     vi.spyOn(fs, 'writeJson').mockImplementation(async (filePath, data, opts) => {
-      if (filePath === fromFile) throw new Error('simulated crash');
+      if (String(filePath).startsWith(fromFile)) throw new Error('simulated crash');
       return originalWriteJson(filePath, data, opts);
     });
 
@@ -181,5 +181,25 @@ describe('reconcileDuplicateTasks', () => {
       const duplicates = await reconcileDuplicateTasks(config(['backend']));
       expect(duplicates).toEqual([]); // only one *inbox* location — not a duplicate
     });
+  });
+});
+
+describe('updateJson corruption safety', () => {
+  it('refuses to overwrite malformed JSON and keeps a recovery copy', async () => {
+    const dir = await tmpDir();
+    const file = path.join(dir, 'state.json');
+    await fs.writeFile(file, '{"tasks": [ broken');
+    await expect(updateJson(file, (d) => { d.x = 1; }, { tasks: [] })).rejects.toMatchObject({ code: 'CORRUPT_JSON' });
+    expect(await fs.readFile(file, 'utf8')).toBe('{"tasks": [ broken');
+    const copies = (await fs.readdir(dir)).filter((f) => f.includes('.corrupt-'));
+    expect(copies).toHaveLength(1);
+  });
+
+  it('uses the fallback only when the file is missing, and leaves no temp files', async () => {
+    const dir = await tmpDir();
+    const file = path.join(dir, 'new.json');
+    await updateJson(file, (d) => { d.tasks.push(1); }, () => ({ tasks: [] }));
+    expect(await fs.readJson(file)).toEqual({ tasks: [1] });
+    expect((await fs.readdir(dir)).filter((f) => f.endsWith('.tmp') || f.endsWith('.lock'))).toEqual([]);
   });
 });

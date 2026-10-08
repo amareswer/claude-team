@@ -71,3 +71,33 @@ describe('acquireLock', () => {
     await fs.remove(`${file}.lock`);
   });
 });
+
+describe('lock hardening', () => {
+  it('never exposes an empty lock file — a fresh lock is always fully populated', async () => {
+    const file = await tmpFile();
+    const lock = await acquireLock(file);
+    const info = await fs.readJson(`${file}.lock`);
+    expect(info.token).toBeTruthy();
+    expect(info.pid).toBe(process.pid);
+    await lock.release();
+  });
+
+  it('does not release a lock that someone else now owns', async () => {
+    const file = await tmpFile();
+    const lock = await acquireLock(file);
+    await fs.writeJson(`${file}.lock`, { pid: process.pid, token: 'other', acquiredAt: new Date().toISOString() });
+    await lock.release();
+    expect(await fs.pathExists(`${file}.lock`)).toBe(true);
+  });
+
+  it('serializes increments across separate processes', async () => {
+    const file = await tmpFile();
+    await fs.writeJson(file, { count: 0 });
+    const worker = path.resolve('test/fixtures/lock-worker.mjs');
+    const { execFile } = await import('child_process');
+    const run = () => new Promise((resolve, reject) =>
+      execFile(process.execPath, [worker, file, '15'], (err, _o, stderr) => (err ? reject(new Error(stderr)) : resolve())));
+    await Promise.all([run(), run(), run(), run()]);
+    expect((await fs.readJson(file)).count).toBe(60);
+  }, 60000);
+});
