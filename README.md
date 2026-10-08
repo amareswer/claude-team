@@ -270,6 +270,7 @@ Claude Code 2.1.224+ ships `ListAgents`/`SendMessage` tools that let one live se
 - The server binds to `localhost` only (`http://localhost:4753`, change with `--port`). Never expose it — it can spawn processes.
 - Starting the office auto-opens a browser tab; pass `--no-open` to skip that (useful for scripts and restarts, so you don't accumulate tabs).
 - The terminal view uses xterm.js from a CDN, so it needs internet; everything else works offline.
+- Token totals are kept per Office process and flushed under the project's file lock. Running two Offices (different `--port`s) against the same project is unsupported for usage counts: each flushes its own totals and the last write wins.
 - Launching requires `node-pty` (installed automatically). If it can't build on your machine, the office falls back to view-only mode and tells you.
 - Each launched agent is a full Claude Code session on your Claude subscription — launch what you need, not the whole roster at once.
 - **First launch in a brand-new project directory**: Claude Code shows a one-time "do you trust this folder?" prompt before it does anything. The office can't detect or answer this for you yet (its exact on-screen text is rendered with per-word cursor-positioning codes that don't survive a simple text match) — if a freshly-launched agent looks stuck at "idle" and never does anything, open its terminal in the drawer and check.

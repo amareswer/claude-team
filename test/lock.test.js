@@ -154,3 +154,103 @@ describe('cross-process locking', () => {
     expect(await lockFiles(file)).toEqual([]);
   }, 120000);
 });
+
+// Deterministic interleavings: each contender is frozen at an exact protocol
+// step via test hooks while rivals run, then released.
+function gate() {
+  let open;
+  const promise = new Promise((r) => (open = r));
+  return { promise, open };
+}
+const settleSoon = (ms = 150) => new Promise((r) => setTimeout(r, ms));
+
+describe('deterministic acquisition interleavings', () => {
+  it('paused after snapshot (before publish): rival wins; the paused one cannot co-own', async () => {
+    const file = await tmpFile();
+    const g = gate();
+    const state = { x: false, y: false };
+    const x = acquireLock(file, { hooks: { afterSnapshot: () => g.promise } }).then((l) => { state.x = true; return l; });
+    await settleSoon();
+    const y = await acquireLock(file); // Y runs to completion while X is frozen
+    state.y = true;
+    g.open();
+    await settleSoon();
+    expect(state.x).toBe(false); // X resumed, hit EEXIST, now waits behind live Y
+    await y.release();
+    const xl = await x;
+    expect(state.x).toBe(true);
+    await xl.release();
+    expect(await lockFiles(file)).toEqual([]);
+  });
+
+  it('paused after publish (before verification): rival cannot enter; resumed owner then holds', async () => {
+    const file = await tmpFile();
+    const g = gate();
+    let xHolds = false, yHolds = false;
+    const x = acquireLock(file, { hooks: { afterPublish: () => g.promise } }).then((l) => { xHolds = true; return l; });
+    await settleSoon();
+    const y = acquireLock(file).then((l) => { yHolds = true; return l; });
+    await settleSoon(300);
+    expect(yHolds).toBe(false); // sees X's published file, X is alive → waits
+    g.open();
+    const xl = await x;
+    expect(yHolds).toBe(false);
+    await xl.release();
+    const yl = await y;
+    expect(xHolds && yHolds).toBe(true);
+    await yl.release();
+  });
+
+  it('stale EMPTY snapshot: newcomer publishes a lower epoch after a rival took over — it backs off', async () => {
+    const file = await tmpFile();
+    const g = gate();
+    let fHolds = false;
+    // F snapshots an empty directory, then freezes.
+    const f = acquireLock(file, { hooks: { afterSnapshot: () => g.promise } }).then((l) => { fHolds = true; return l; });
+    await settleSoon();
+    // Meanwhile a dead lock appears and E takes over to epoch 2, deleting it.
+    await plant(file, 1, { pid: 999999, token: 'dead', acquiredAt: new Date().toISOString() });
+    const e = await acquireLock(file);
+    expect(await lockFiles(file)).toEqual([`${path.basename(file)}.lock.2`]);
+    // F resumes: publishes epoch 1 (no EEXIST!) but its verification sees epoch 2 → abort.
+    g.open();
+    await settleSoon(300);
+    expect(fHolds).toBe(false);
+    expect(await lockFiles(file)).toEqual([`${path.basename(file)}.lock.2`]); // F removed its epoch-1 file
+    await e.release();
+    await (await f).release();
+  });
+
+  it('two newcomers both snapshot the same dead lock: exactly one proceeds at a time', async () => {
+    const file = await tmpFile();
+    await plant(file, 1, { pid: 999999, token: 'dead', acquiredAt: new Date().toISOString() });
+    const g = gate();
+    let live = 0, max = 0;
+    const run = () => withLock(file, async () => {
+      live++; max = Math.max(max, live);
+      await settleSoon(30);
+      live--;
+    }, { hooks: { afterSnapshot: () => g.promise }, timeoutMs: 10000 });
+    const runs = [run(), run(), run(), run()];
+    await settleSoon();
+    g.open(); // all four proceed from an identical snapshot simultaneously
+    await Promise.all(runs);
+    expect(max).toBe(1);
+    expect(await lockFiles(file)).toEqual([]);
+  });
+});
+
+describe('fail-closed filesystem errors', () => {
+  it('an unreadable lock file is an error, not an absent lock', async () => {
+    const file = await tmpFile();
+    await plant(file, 1, { pid: process.pid, token: 'x', acquiredAt: new Date().toISOString() });
+    const lockPath = `${file}.lock.1`;
+    await fs.chmod(lockPath, 0o000);
+    try {
+      if (process.getuid?.() === 0) return; // root ignores modes
+      await expect(acquireLock(file, { timeoutMs: 300 })).rejects.toThrow(/EACCES/);
+    } finally {
+      await fs.chmod(lockPath, 0o644);
+    }
+  });
+});
