@@ -40,7 +40,7 @@ Replace `/path/to/claude-team` with wherever you cloned this repo, e.g. `~/proje
   alias claude-team='npx /path/to/claude-team'
   ```
 
-**Requirements**: Node.js 18+ and Claude Code (`claude` CLI) installed. `claude-team office`'s launch/hire features use `node-pty` (a native module, built automatically the first time you run `npm install` inside the claude-team repo itself); if it can't build on your machine the office still runs, just in view-only mode.
+**Requirements**: Node.js 20.17+ (or 22.13+ / 23.5+; declared in `package.json` `engines`, driven by the Inquirer dependency) and Claude Code (`claude` CLI) installed. `claude-team office`'s launch/hire features use `node-pty` (a native module, built automatically the first time you run `npm install` inside the claude-team repo itself); if it can't build on your machine the office still runs, just in view-only mode.
 
 ---
 
@@ -67,7 +67,7 @@ Then open one terminal per agent, run `claude` in each, and paste the prompt `cl
 | `claude-team init` | Interactive wizard — generates the full team (asks before overwriting an existing one) |
 | `claude-team start` | Print the launch instructions for every agent |
 | `claude-team status` | Agent status, context usage, doc token health, task summary (terminal) |
-| `claude-team office` | Live visual office view of the team in your browser (`--port` to change port, `--no-open` to skip auto-opening a tab) |
+| `claude-team office` | Live visual office view of the team in your browser (`--port` to change port, `--no-open` to skip auto-opening a tab). The printed URL carries a per-run access key; the server also validates Host/Origin on every request and WebSocket, so other web pages can't drive your terminals. |
 | `claude-team add` | Add a new worker agent to an existing team |
 | `claude-team remove` | Remove an agent from the team (deletes its instructions, memory doc, and task files) |
 | `claude-team archive` | Archive all project docs when the project is done (human-triggered) |

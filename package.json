@@ -7,6 +7,9 @@
     "claude-team": "./bin/claude-team.js"
   },
   "main": "lib/cli.js",
+  "engines": {
+    "node": "^20.17.0 || ^22.13.0 || >=23.5.0"
+  },
   "scripts": {
     "start": "node bin/claude-team.js",
     "dev": "node bin/claude-team.js",
