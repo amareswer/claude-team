@@ -101,3 +101,28 @@ describe('lock hardening', () => {
     expect((await fs.readJson(file)).count).toBe(60);
   }, 60000);
 });
+
+describe('stale lock takeover under contention', () => {
+  it('many contenders racing over one dead-owner lock never lose an update', async () => {
+    const file = await tmpFile();
+    await fs.writeJson(file, { count: 0 });
+    await fs.writeJson(`${file}.lock`, { pid: 999999, token: 'dead', acquiredAt: new Date().toISOString() });
+    await Promise.all(Array.from({ length: 25 }, () => withLock(file, async () => {
+      const doc = await fs.readJson(file);
+      await new Promise((r) => setTimeout(r, Math.random() * 5));
+      doc.count += 1;
+      await fs.writeJson(file, doc);
+    }, { timeoutMs: 15000 })));
+    expect((await fs.readJson(file)).count).toBe(25);
+    expect(await fs.pathExists(`${file}.lock`)).toBe(false);
+    expect((await fs.readdir(path.dirname(file))).filter((f) => f !== 'shared.json')).toEqual([]);
+  });
+
+  it('a live lock is never reaped just for being old when its owner is alive and heartbeating', async () => {
+    const file = await tmpFile();
+    const lock = await acquireLock(file);
+    // mtime fresh (heartbeat/just created), pid alive -> not stale
+    await expect(acquireLock(file, { timeoutMs: 200 })).rejects.toThrow(/Timed out/);
+    await lock.release();
+  });
+});

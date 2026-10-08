@@ -203,3 +203,21 @@ describe('updateJson corruption safety', () => {
     expect((await fs.readdir(dir)).filter((f) => f.endsWith('.tmp') || f.endsWith('.lock'))).toEqual([]);
   });
 });
+
+describe('updateJsonIfExists', () => {
+  it('skips missing files, throws on corrupt ones, and honours `false` as no-op', async () => {
+    const { updateJsonIfExists } = await import('../lib/jsonStore.js');
+    const dir = await tmpDir();
+    const file = path.join(dir, 'master.json');
+    expect(await updateJsonIfExists(file, () => { throw new Error('should not run'); })).toBeNull();
+    expect(await fs.pathExists(file)).toBe(false);
+
+    await fs.writeJson(file, { tasks: [] });
+    const before = (await fs.stat(file)).mtimeMs;
+    await updateJsonIfExists(file, () => false);
+    expect((await fs.stat(file)).mtimeMs).toBe(before);
+
+    await fs.writeFile(file, '{oops');
+    await expect(updateJsonIfExists(file, () => {})).rejects.toMatchObject({ code: 'CORRUPT_JSON' });
+  });
+});
