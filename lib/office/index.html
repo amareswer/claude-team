@@ -299,6 +299,7 @@
     <div class="chip" id="h-tasks" onclick="openTasksDrawer()" style="cursor:pointer" title="Open the task board">📋 —</div>
     <div class="chip" id="h-master">📄 MASTER —</div>
     <div class="chip" id="h-tokens" style="display:none">🪙 —</div>
+    <div class="chip alert" id="h-review" style="display:none" onclick="openTasksDrawer()" title="Finished work waiting for your decision">👀 —</div>
     <div class="chip alert" id="h-questions" style="display:none" onclick="openBossDrawer()">❓ —</div>
     <div class="chip" id="h-bell" onclick="toggleNotifications()" style="cursor:pointer" title="Desktop notifications for new questions and blocked agents">🔕</div>
   </header>
@@ -466,6 +467,10 @@ function render() {
   } else tokChip.style.display = 'none';
   document.getElementById('h-bell').textContent = notifyEnabled ? '🔔' : '🔕';
   checkNotifications();
+  const nReview = state.tasks.filter(t => t.status === 'review').length;
+  const rChip = document.getElementById('h-review');
+  rChip.style.display = nReview ? '' : 'none';
+  rChip.textContent = `👀 ${nReview} to review`;
   const qChip = document.getElementById('h-questions');
   const nUnanswered = state.openQuestions.filter(q => !q.answered).length;
   if (nUnanswered > 0) {
@@ -511,6 +516,7 @@ function syncDrawer() {
   if (!drawerAgent) return;
   if (drawerAgent === 'BOSS') return; // has forms — don't clobber user input
   if (drawerAgent === 'HIRE') return; // form — don't clobber user input
+  if (drawerAgent === 'REVIEW') return; // has a note field — don't clobber it
   if (drawerAgent === 'TASKS') return; // has selects — refreshed after each action instead
   const a = state.agents.find(x => x.name === drawerAgent);
   if (!a) { closeDrawer(); return; }
@@ -723,6 +729,7 @@ function taskRowHtml(t) {
       ? `<div style="font-size:12px;color:var(--dim);margin-top:4px">${esc(t.assignedTo)}</div>`
       : `<div style="display:flex;gap:8px;align-items:center;margin-top:6px">
           <select onchange="reassignTask('${esc(t.id)}', this.value)" style="font-size:12px;padding:3px 6px">${assignOptions}</select>
+          ${t.status === 'review' ? `<button class="btn" style="font-size:11px;padding:4px 8px" onclick="openReviewDrawer('${esc(t.id)}')">👀 Review</button>` : ''}
           <button class="btn secondary" style="font-size:11px;padding:4px 8px" onclick="cancelTask('${esc(t.id)}')">🚫 Cancel</button>
         </div>`}
   </div>`;
@@ -743,6 +750,100 @@ function renderTasksDrawer() {
         <h4>${g.label} (${g.tasks.length})</h4>
         ${g.tasks.map(taskRowHtml).join('')}
       </section>`).join('') : '<p style="font-size:13px">No tasks yet — hand one out from your desk drawer.</p>'}`;
+}
+
+// ── Review panel ───────────────────────────────────────
+let reviewId = null;
+let reviewData = null;
+const CHECK_LABEL = { passed: '✅ checks passed', failed: '❌ checks failed', stale: '♻️ checks stale (code changed since they ran)', not_run: '⏳ checks not run', none: 'no checks defined', error: '⚠️ checks unreadable', unapproved: '🔒 checks not approved' };
+
+function openReviewDrawer(id) {
+  detachTerminal(); drawerAgent = 'REVIEW'; reviewId = id; reviewData = null;
+  const d = document.getElementById('drawer');
+  d.classList.add('wide');
+  document.getElementById('drawer-body').innerHTML = `<div class="d-emoji">👀</div><h2>Review ${esc(id)}</h2><div class="d-role">loading…</div><div class="err" id="review-err"></div>`;
+  show(true);
+  loadReview();
+}
+
+async function loadReview() {
+  const err = () => document.getElementById('review-err');
+  try {
+    const res = await fetch('/api/review?id=' + encodeURIComponent(reviewId));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    reviewData = data;
+    renderReviewDrawer();
+  } catch (e) { if (err()) err().textContent = e.message; }
+}
+
+function diffHtml(diff) {
+  if (!diff) return '<p style="font-size:13px;color:var(--dim)">Not a git repository — no diff available.</p>';
+  const lines = diff.patch.split('\n').map(l => {
+    const c = l.startsWith('+') && !l.startsWith('+++') ? '#1a7f37' : l.startsWith('-') && !l.startsWith('---') ? '#cf222e' : l.startsWith('@@') ? '#6a5a8a' : 'inherit';
+    return `<span style="color:${c}">${esc(l)}</span>`;
+  }).join('\n');
+  return `${diff.stat ? `<pre>${esc(diff.stat)}</pre>` : '<p style="font-size:13px;color:var(--dim)">No tracked changes.</p>'}
+    ${diff.untracked.length ? `<p style="font-size:12px;color:var(--dim)">New untracked files: ${diff.untracked.map(esc).join(', ')}</p>` : ''}
+    ${diff.patch.trim() ? `<pre style="max-height:340px;overflow:auto;white-space:pre">${lines}</pre>` : ''}
+    ${diff.truncated ? `<p style="font-size:12px;color:var(--dim)">Diff truncated (${diff.totalLines} lines in total) — run <code>git diff ${esc(diff.base)}</code> for the rest.</p>` : ''}`;
+}
+
+function renderReviewDrawer(confirm = null) {
+  const d = reviewData;
+  if (!d) return;
+  // Re-renders (confirm step, errors) must not wipe what the reviewer typed.
+  const prevNote = document.getElementById('review-note')?.value || '';
+  const prevUnverified = !!document.getElementById('review-unverified')?.checked;
+  const overall = d.live.checks.overall;
+  const verified = overall === 'none' || overall === 'passed';
+  const pending = d.state === 'pending';
+  document.getElementById('drawer-body').innerHTML = `
+    <div class="d-emoji">👀</div>
+    <h2>${esc(d.title)}</h2>
+    <div class="d-role">${esc(d.taskId)} · ${esc(d.assignedTo || '?')} · requested ${esc(d.requestedAt)} by ${esc(d.requestedBy)} · <b>${esc(d.state)}</b></div>
+    <div class="err" id="review-err"></div>
+    <section><h4>Agent's explanation</h4>
+      <div class="kv">${d.summary ? esc(d.summary) : '<i>none given</i>'}</div>
+      ${d.agentNotes ? `<div class="kv" style="color:var(--dim)">Notes: ${esc(d.agentNotes)}</div>` : ''}
+    </section>
+    ${d.acceptanceCriteria.length ? `<section><h4>Acceptance criteria</h4><ul>${d.acceptanceCriteria.map(c => `<li>${esc(c)}</li>`).join('')}</ul></section>` : ''}
+    <section><h4>Checks <span style="text-transform:none;letter-spacing:0">(evidence, not approval)</span></h4>
+      <div class="kv">${CHECK_LABEL[overall] || esc(overall)}</div>
+      ${(d.live.checks.checks || []).map(c => `<div class="kv" style="color:var(--dim)">${esc(c.name)}: ${esc(c.state)}${c.exitCode != null ? ` (exit ${esc(c.exitCode)})` : ''}</div>`).join('')}
+      ${d.live.codeChanged ? '<div class="kv" style="color:#b25a00">⚠ The code has changed since this review was requested.</div>' : ''}
+    </section>
+    <section><h4>Code changes <span style="text-transform:none;letter-spacing:0">${d.diff ? '(vs ' + esc(d.diff.base) + ')' : ''}</span></h4>${diffHtml(d.diff)}</section>
+    ${pending ? `
+    <section><h4>Your decision</h4>
+      <textarea id="review-note" rows="3" style="width:100%;font:inherit;font-size:13px;padding:6px" placeholder="Note (required to reject — it goes to ${esc(d.assignedTo || 'the assignee')}'s inbox)"></textarea>
+      ${verified ? '' : `<label style="display:block;font-size:12px;margin:6px 0"><input type="checkbox" id="review-unverified"> Approve even though checks are not passed on the current code</label>`}
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px" id="review-actions">
+        ${confirm === 'approve'
+          ? `<span style="font-size:13px">Mark <b>${esc(d.taskId)}</b> done?</span>
+             <button class="btn" onclick="decideReview('approve')">Yes, approve</button>
+             <button class="btn secondary" onclick="renderReviewDrawer()">Cancel</button>`
+          : `<button class="btn" onclick="renderReviewDrawer('approve')">✅ Approve</button>
+             <button class="btn stop" onclick="decideReview('reject')">↩ Reject</button>`}
+      </div>
+    </section>` : `<section><h4>Decision</h4><div class="kv">${esc(d.state)}${d.decision ? ' by ' + esc(d.decision.by) + ' at ' + esc(d.decision.at) + (d.decision.note ? ' — ' + esc(d.decision.note) : '') : ''}</div></section>`}`;
+  const n = document.getElementById('review-note'); if (n) n.value = prevNote;
+  const u = document.getElementById('review-unverified'); if (u) u.checked = prevUnverified;
+}
+
+async function decideReview(kind) {
+  const err = document.getElementById('review-err');
+  const note = (document.getElementById('review-note')?.value || '').trim();
+  if (kind === 'reject' && !note) { err.textContent = 'Write a note saying what needs to change.'; return; }
+  const acceptUnverified = !!document.getElementById('review-unverified')?.checked;
+  try {
+    await post('/api/review/' + kind, { id: reviewId, note, acceptUnverified });
+    await poll();
+    openTasksDrawer();
+  } catch (e) {
+    renderReviewDrawer(); // back to the Approve/Reject buttons, note preserved
+    const el = document.getElementById('review-err'); if (el) el.textContent = e.message.replace(/Re-run `claude-team check ([^`]+)` or approve with --accept-unverified\./, 'Re-run `claude-team check $1`, or tick the box above to approve anyway.');
+  }
 }
 
 async function reassignTask(id, assignTo) {

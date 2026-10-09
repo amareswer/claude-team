@@ -91,3 +91,53 @@ describe('createOfficeAuth', () => {
     expect(createOfficeAuth(1).secret).not.toBe(createOfficeAuth(1).secret);
   });
 });
+
+describe('office review decisions', () => {
+  let cookie;
+  const H = (extra = {}) => ({ host: `localhost:${PORT}`, 'content-type': 'application/json', ...extra });
+  const post = (p, body, headers) => request({ path: p, method: 'POST', headers: H(headers) }, JSON.stringify(body));
+
+  beforeAll(async () => {
+    const { requestReview } = await import('../lib/review.js');
+    const t = { id: 'rv-1', title: 'Review me', status: 'in_progress', assignedTo: 'backend' };
+    await fs.writeJson(path.join(dir, '.claude-team/tasks/master.json'), { tasks: [{ ...t }, { ...t, id: 'rv-2' }] });
+    await fs.writeJson(path.join(dir, '.claude-team/tasks/backend-inbox.json'), { tasks: [], messages: [] });
+    const config = await fs.readJson(path.join(dir, '.claude-team/config.json'));
+    await requestReview(config, 'rv-1', { summary: 'did it', root: dir });
+    await requestReview(config, 'rv-2', { summary: 'did it too', root: dir });
+    const boot = await request({ path: `/?key=${key}`, headers: { host: `localhost:${PORT}` } });
+    cookie = boot.headers['set-cookie'][0].split(';')[0];
+  });
+
+  it('serves the review detail only to an authenticated client', async () => {
+    expect((await request({ path: '/api/review?id=rv-1', headers: { host: `localhost:${PORT}` } })).status).toBe(401);
+    const r = await request({ path: '/api/review?id=rv-1', headers: H({ cookie }) });
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body)).toMatchObject({ taskId: 'rv-1', state: 'pending', summary: 'did it' });
+    expect((await request({ path: '/api/review?id=missing', headers: H({ cookie }) })).status).toBe(404);
+  });
+
+  it('refuses decisions without the cookie or from a foreign origin, and changes nothing', async () => {
+    expect((await post('/api/review/approve', { id: 'rv-1' })).status).toBe(401);
+    expect((await post('/api/review/approve', { id: 'rv-1' }, { cookie, origin: 'http://evil.example' })).status).toBe(403);
+    const m = await fs.readJson(path.join(dir, '.claude-team/tasks/master.json'));
+    expect(m.tasks.find((x) => x.id === 'rv-1').status).toBe('review');
+  });
+
+  it('reject needs a note; approve marks done; deciding twice is a 409', async () => {
+    const auth = { cookie, origin: `http://localhost:${PORT}` };
+    expect((await post('/api/review/reject', { id: 'rv-2', note: '  ' }, auth)).status).toBe(400);
+    const rej = await post('/api/review/reject', { id: 'rv-2', note: 'add tests' }, auth);
+    expect(rej.status).toBe(200);
+    const inbox = await fs.readJson(path.join(dir, '.claude-team/tasks/backend-inbox.json'));
+    expect(inbox.messages.at(-1)).toMatchObject({ type: 'review_rejected', taskId: 'rv-2' });
+
+    const ok = await post('/api/review/approve', { id: 'rv-1', note: 'good' }, auth);
+    expect(ok.status).toBe(200);
+    expect(JSON.parse(ok.body).decision.by).toBe('human (office)');
+    const m = await fs.readJson(path.join(dir, '.claude-team/tasks/master.json'));
+    expect(m.tasks.find((x) => x.id === 'rv-1').status).toBe('done');
+    expect(m.tasks.find((x) => x.id === 'rv-2').status).toBe('assigned');
+    expect((await post('/api/review/approve', { id: 'rv-1' }, auth)).status).toBe(409);
+  });
+});
