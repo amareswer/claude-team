@@ -779,6 +779,7 @@ async function loadReview() {
 
 function diffHtml(diff) {
   if (!diff) return '<p style="font-size:13px;color:var(--dim)">Not a git repository — no diff available.</p>';
+  if (diff.error) return `<p style="font-size:13px;color:#cf222e">✗ ${esc(diff.error)}</p>`;
   const lines = diff.patch.split('\n').map(l => {
     const c = l.startsWith('+') && !l.startsWith('+++') ? '#1a7f37' : l.startsWith('-') && !l.startsWith('---') ? '#cf222e' : l.startsWith('@@') ? '#6a5a8a' : 'inherit';
     return `<span style="color:${c}">${esc(l)}</span>`;
@@ -837,7 +838,7 @@ async function decideReview(kind) {
   if (kind === 'reject' && !note) { err.textContent = 'Write a note saying what needs to change.'; return; }
   const acceptUnverified = !!document.getElementById('review-unverified')?.checked;
   try {
-    await post('/api/review/' + kind, { id: reviewId, note, acceptUnverified, requestId: reviewData?.requestId });
+    await post('/api/review/' + kind, { id: reviewId, note, acceptUnverified, requestId: reviewData?.requestId, fingerprint: reviewData?.live?.fingerprint });
     await poll();
     openTasksDrawer();
   } catch (e) {

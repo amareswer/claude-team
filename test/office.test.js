@@ -141,3 +141,32 @@ describe('office review decisions', () => {
     expect((await post('/api/review/approve', { id: 'rv-1' }, auth)).status).toBe(409);
   });
 });
+
+describe('one Office per project', () => {
+  const start = (port) => {
+    const c = spawn(process.execPath, [bin, 'office', '--port', String(port), '--no-open'], { cwd: dir });
+    let out = '', err = '';
+    c.stdout.on('data', (d) => (out += d));
+    c.stderr.on('data', (d) => (err += d));
+    const exited = new Promise((r) => c.on('exit', (code) => r(code)));
+    return { c, exited, out: () => out, err: () => err };
+  };
+  const until = async (fn, ms = 8000) => { const t = Date.now(); while (Date.now() - t < ms) { if (fn()) return true; await new Promise((r) => setTimeout(r, 50)); } return false; };
+
+  it('a second Office in the same project refuses to start and points at the first', async () => {
+    const second = start(PORT + 1);
+    expect(await second.exited).toBe(1);
+    expect(second.err()).toMatch(/already running for this project/);
+    expect(second.err()).toContain(`http://localhost:${PORT}`);
+    expect(second.err()).toContain(`pid ${child.pid}`);
+  });
+
+  it('after the first one stops, a new Office can start', async () => {
+    child.kill('SIGINT');
+    await new Promise((r) => child.on('exit', r));
+    const again = start(PORT + 2);
+    expect(await until(() => /Office is open/.test(again.out()))).toBe(true);
+    again.c.kill('SIGINT');
+    await again.exited;
+  });
+});

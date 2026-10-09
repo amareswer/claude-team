@@ -73,6 +73,7 @@ Then open one terminal per agent, run `claude` in each, and paste the prompt `cl
 | `claude-team checks` / `checks approve <name>` | List checks and their approval state / approve a check's exact command (interactive terminal only). |
 | `claude-team review` / `review show <id>` | The human review queue: what's waiting for you, and for one task the agent's explanation, acceptance criteria, check evidence and the code diff (tracked + untracked, `--lines` to see more). |
 | `claude-team review request <id>` | (agents/orchestrator) put a finished task in the queue; sets its status to `review`. |
+| `claude-team review repair [--dry-run]` | Finish review decisions an interruption left half-applied. |
 | `claude-team review approve <id>` / `reject <id> -m "…"` | (human, interactive terminal only) accept → task `done`; or send back → task `assigned` and your note lands in the assignee's inbox as a `review_rejected` message. |
 | `claude-team office` | Live visual office view of the team in your browser (`--port` to change port, `--no-open` to skip auto-opening a tab). The printed URL carries a per-run access key; the server also validates Host/Origin on every request and WebSocket, so other web pages can't drive your terminals. |
 | `claude-team add` | Add a new worker agent to an existing team |
@@ -239,6 +240,10 @@ Passing checks never approve anything, and approving never rewrites check result
 
 **What the review trail is — and isn't.** Approvals, rejections, check results and the `decision.by` field are an audit trail for a *workflow*: they show what was recorded and in what order, and the checks above stop the easy mistakes. They are **not proof of who acted**. Agents run as the same OS user as you and can in principle read or edit `.claude-team/` files, run the CLI with a pseudo-terminal, or call the library; the browser cookie only protects the Office from other web pages. If you need a hard boundary, run agents under a separate user or container with no write access to `.claude-team/review-queue/`, `config.json` and `checks/`.
 
+**Approval is tied to what you saw.** The Office panel and the CLI send the request version *and* a fingerprint of the code they displayed; if either changed before you confirm, the approval is refused (`409`) and you reload and review again. If the diff base can't be used (e.g. rewritten history) the review shows an error instead of an empty diff.
+
+**Interrupted decisions.** A decision is recorded first and then applied to the task. If the process dies in between, `claude-team resume` flags it and `claude-team review repair` (`--dry-run` to preview) finishes it — idempotently, only for tasks still in the state the interruption leaves, and it never re-sends feedback an assignee already cleared.
+
 **Concurrent decisions.** Each request has a `requestId`; the pending check and the decision are one locked update, so of several simultaneous approve/reject calls exactly one succeeds and the others get `409`, and a decision made against an out-of-date request is refused (`STALE_REQUEST`).
 
 **What the diff is compared against.** Not current `HEAD` (that hides work an agent already committed). In order: `--base <rev>`; the revision recorded when the Office first assigned the task; the last commit before the task's assignment time (inferred, and labelled as such); otherwise `HEAD`. The review shows the commits since that point. If several agents commit to one checkout, unrelated commits can appear in the list — separate worktrees per agent would remove that.
@@ -309,7 +314,7 @@ Claude Code 2.1.224+ ships `ListAgents`/`SendMessage` tools that let one live se
 - The server binds to `localhost` only (`http://localhost:4753`, change with `--port`). Never expose it — it can spawn processes.
 - Starting the office auto-opens a browser tab; pass `--no-open` to skip that (useful for scripts and restarts, so you don't accumulate tabs).
 - The terminal view uses xterm.js from a CDN, so it needs internet; everything else works offline.
-- Token totals are kept per Office process and flushed under the project's file lock. Running two Offices (different `--port`s) against the same project is unsupported for usage counts: each flushes its own totals and the last write wins.
+- **One Office per project.** A second `claude-team office` in the same project refuses to start and tells you where the first one is running (a crashed Office's lock is cleaned up automatically). This keeps token totals and agent nudging in one place.
 - Launching requires `node-pty` (installed automatically). If it can't build on your machine, the office falls back to view-only mode and tells you.
 - Each launched agent is a full Claude Code session on your Claude subscription — launch what you need, not the whole roster at once.
 - **First launch in a brand-new project directory**: Claude Code shows a one-time "do you trust this folder?" prompt before it does anything. The office can't detect or answer this for you yet (its exact on-screen text is rendered with per-word cursor-positioning codes that don't survive a simple text match) — if a freshly-launched agent looks stuck at "idle" and never does anything, open its terminal in the drawer and check.

@@ -95,3 +95,25 @@ describe('runInit — cost/scale warning gate', () => {
     });
   });
 });
+
+
+describe('runInit — recovery: existing instructions survive', () => {
+  it('keeps a pre-existing CLAUDE.md and adds the managed team section; a re-init does not duplicate it', async () => {
+    await withTempCwd(async () => {
+      await fs.writeFile('CLAUDE.md', '# My rules\nNever force-push main.\n');
+      stubAnswers({ ...baseAnswers, confirmTeamSize: true });
+      const { runInit } = await import('../lib/init.js');
+      await runInit();
+      const once = await fs.readFile('CLAUDE.md', 'utf8');
+      expect(once).toContain('Never force-push main.');
+      expect(once.match(/<!-- claude-team:start -->/g)).toHaveLength(1);
+
+      // re-init over the existing team (the overwrite gate is confirmed)
+      stubAnswers({ ...baseAnswers, confirmTeamSize: true, overwrite: true });
+      await runInit();
+      const twice = await fs.readFile('CLAUDE.md', 'utf8');
+      expect(twice).toContain('Never force-push main.');
+      expect(twice.match(/<!-- claude-team:start -->/g)).toHaveLength(1);
+    });
+  });
+});

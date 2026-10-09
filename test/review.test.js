@@ -1,10 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'fs-extra';
 import path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import { withTempCwd, minimalConfig, assertTempCwd } from './helpers.js';
 import { approveCheck, runTaskChecks } from '../lib/checks.js';
-import { requestReview, approveReview, rejectReview, listReviews, reviewDetail } from '../lib/review.js';
+import { requestReview, approveReview, rejectReview, listReviews, reviewDetail, reconcileReviews } from '../lib/review.js';
+
+afterEach(() => vi.restoreAllMocks());
 
 const git = (...a) => { assertTempCwd(); return execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'pipe' }); };
 const master = () => fs.readJson('.claude-team/tasks/master.json');
@@ -277,6 +279,108 @@ describe('base revision: committed work stays visible', () => {
       const rec = await requestReview(config, 'task-1');
       expect(rec.baseSource).toBe('inferred (no commits before assignment)');
       expect((await reviewDetail(config, 'task-1')).diff.stat).toContain('app.js');
+    });
+  });
+});
+
+describe('approval is tied to what the reviewer saw', () => {
+  it('refuses when the code changed after the reviewer opened the review, and succeeds on the refreshed view', async () => {
+    await withTempCwd(async () => {
+      const config = await project();
+      await requestReview(config, 'task-1');
+      const seen = (await reviewDetail(config, 'task-1')).live.fingerprint;
+      expect(seen).toMatch(/^[0-9a-f]{64}$/);
+      await fs.writeFile('app.js', 'sneaky change after the reviewer looked\n');
+      await expect(approveReview(config, 'task-1', { expectedFingerprint: seen })).rejects.toMatchObject({ code: 'CODE_CHANGED', statusCode: 409 });
+      expect((await master()).tasks[0].status).toBe('review'); // nothing applied
+      const refreshed = (await reviewDetail(config, 'task-1')).live.fingerprint;
+      await approveReview(config, 'task-1', { expectedFingerprint: refreshed });
+      expect((await master()).tasks[0].status).toBe('done');
+    });
+  });
+});
+
+describe('an unusable diff base is an error, not an empty diff', () => {
+  it('reports the problem and still lists untracked files', async () => {
+    await withTempCwd(async () => {
+      const config = await project();
+      await fs.writeFile('extra.js', 'x');
+      await requestReview(config, 'task-1', { baseRevision: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' });
+      const d = await reviewDetail(config, 'task-1');
+      expect(d.diff.error).toMatch(/Cannot compare against deadbeef/);
+      expect(d.diff.patch).toBe('');
+      expect(d.diff.untracked).toContain('extra.js');
+    });
+  });
+});
+
+describe('interrupted decisions leave recoverable state', () => {
+  // Simulates a crash between "decision recorded" and "task updated" by making
+  // the task-status write fail, exactly as a process dying there would.
+  const failTaskWrites = () => {
+    const real = fs.rename.bind(fs);
+    return vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (String(to).endsWith('master.json') || String(to).endsWith('queue.json')) throw new Error('simulated crash');
+      return real(from, to);
+    });
+  };
+
+  it('approve interrupted before the task changes: record says approved, repair finishes it', async () => {
+    await withTempCwd(async () => {
+      const config = await project();
+      await requestReview(config, 'task-1');
+      const spy = failTaskWrites();
+      await expect(approveReview(config, 'task-1', { note: 'ok' })).rejects.toThrow('simulated crash');
+      spy.mockRestore();
+      expect((await fs.readJson('.claude-team/review-queue/task-1.json')).state).toBe('approved'); // the decision survived
+      expect((await master()).tasks[0].status).toBe('review');                                       // the task did not
+      expect(await reconcileReviews(config, { apply: false })).toHaveLength(1);                      // dry run reports it…
+      expect((await master()).tasks[0].status).toBe('review');                                       // …and changes nothing
+      await reconcileReviews(config);
+      expect((await master()).tasks[0].status).toBe('done');
+      expect(await reconcileReviews(config)).toEqual([]);                                            // idempotent
+    });
+  });
+
+  it('reject interrupted before the task/inbox change: repair applies both exactly once', async () => {
+    await withTempCwd(async () => {
+      const config = await project();
+      await requestReview(config, 'task-1');
+      const spy = failTaskWrites();
+      await expect(rejectReview(config, 'task-1', { note: 'fix the edge case' })).rejects.toThrow('simulated crash');
+      spy.mockRestore();
+      expect((await fs.readJson('.claude-team/tasks/backend-inbox.json')).messages).toHaveLength(0);
+      await reconcileReviews(config);
+      await reconcileReviews(config);
+      expect((await master()).tasks[0].status).toBe('assigned');
+      const msgs = (await fs.readJson('.claude-team/tasks/backend-inbox.json')).messages;
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0].message).toContain('fix the edge case');
+    });
+  });
+
+  it('does not resend feedback the assignee already read and cleared, and never overrides later work', async () => {
+    await withTempCwd(async () => {
+      const config = await project();
+      await requestReview(config, 'task-1');
+      await rejectReview(config, 'task-1', { note: 'again' });
+      await fs.writeJson('.claude-team/tasks/backend-inbox.json', { tasks: [], messages: [] }); // agent handled + cleared it
+      const m = await master(); m.tasks[0].status = 'in_progress'; await fs.writeJson('.claude-team/tasks/master.json', m);
+      expect(await reconcileReviews(config)).toEqual([]);
+      expect((await fs.readJson('.claude-team/tasks/backend-inbox.json')).messages).toHaveLength(0);
+      expect((await master()).tasks[0].status).toBe('in_progress');
+    });
+  });
+
+  it('request interrupted before the task moved to review is repaired', async () => {
+    await withTempCwd(async () => {
+      const config = await project();
+      const spy = failTaskWrites();
+      await expect(requestReview(config, 'task-1')).rejects.toThrow('simulated crash');
+      spy.mockRestore();
+      expect((await master()).tasks[0].status).toBe('in_progress');
+      expect((await reconcileReviews(config)).map((a) => a.taskId)).toEqual(['task-1']);
+      expect((await master()).tasks[0].status).toBe('review');
     });
   });
 });
