@@ -85,3 +85,30 @@ describe('buildResume with acceptance checks', () => {
     });
   });
 });
+
+describe('buildResume with the review queue', () => {
+  it('lists reviews waiting on the human and flags review-status tasks with no request', async () => {
+    await withTempCwd(async () => {
+      const { execFileSync } = await import('child_process');
+      const { requestReview } = await import('../lib/review.js');
+      const git = (...a) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'pipe' });
+      git('init', '-q');
+      const config = minimalConfig();
+      await seed(config, {
+        '.claude-team/tasks/master.json': { tasks: [
+          { id: 'a', title: 'Requested', status: 'in_progress', assignedTo: 'backend' },
+          { id: 'b', title: 'Orphan', status: 'review', assignedTo: 'frontend' },
+        ] },
+      });
+      git('add', '-A'); git('commit', '-q', '-m', 'x');
+      await requestReview(config, 'a', { summary: 'did it' });
+      const r = await buildResume(config);
+      expect(r.reviews).toHaveLength(1);
+      expect(r.reviews[0]).toMatchObject({ taskId: 'a', summary: 'did it' });
+      const texts = r.next.filter((n) => n.kind === 'review').map((n) => n.text);
+      expect(texts[0]).toMatch(/Review a "Requested"/);
+      expect(texts.some((t) => /b "Orphan".*no review request/.test(t))).toBe(true);
+      expect(renderResume(r)).toContain('Waiting for your review');
+    });
+  });
+});

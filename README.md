@@ -71,6 +71,9 @@ Then open one terminal per agent, run `claude` in each, and paste the prompt `cl
 | `claude-team resume` | Where the project stands: what finished, what's in progress, who's blocked or waiting on review, open questions for you, code changes, and ordered next steps. Built only from `.claude-team/` files and git — no agent session, no tokens. `--json` for scripts. State files that can't be parsed are listed, never silently skipped. |
 | `claude-team check <task-id>` | Runs the task's acceptance checks (named commands from `config.checks`) with timeouts and bounded logs, and saves exit codes, timestamps, git revision and a working-tree fingerprint to `.claude-team/checks/<task-id>.json`. Exit code 0 only if all pass. Never changes the task's status. |
 | `claude-team checks` / `checks approve <name>` | List checks and their approval state / approve a check's exact command (interactive terminal only). |
+| `claude-team review` / `review show <id>` | The human review queue: what's waiting for you, and for one task the agent's explanation, acceptance criteria, check evidence and the code diff (tracked + untracked, `--lines` to see more). |
+| `claude-team review request <id>` | (agents/orchestrator) put a finished task in the queue; sets its status to `review`. |
+| `claude-team review approve <id>` / `reject <id> -m "…"` | (human, interactive terminal only) accept → task `done`; or send back → task `assigned` and your note lands in the assignee's inbox as a `review_rejected` message. |
 | `claude-team office` | Live visual office view of the team in your browser (`--port` to change port, `--no-open` to skip auto-opening a tab). The printed URL carries a per-run access key; the server also validates Host/Origin on every request and WebSocket, so other web pages can't drive your terminals. |
 | `claude-team add` | Add a new worker agent to an existing team |
 | `claude-team remove` | Remove an agent from the team (deletes its instructions, memory doc, and task files) |
@@ -223,6 +226,16 @@ Define named checks in `.claude-team/config.json`, reference them from tasks, an
 - **`claude-team check <task-id>`** refuses to start if any listed check is undefined or unapproved, otherwise runs each in the task's `workingDir` (must stay inside the project) with its timeout (process tree killed on expiry) and keeps the last 64 KB of output. The orchestrator is instructed to call this when implementation is ready.
 - **Evidence, not acceptance.** Results record task ID, command, start/finish time, exit code, timeout flag, git revision and a fingerprint of all uncommitted and untracked changes (ignoring `.claude-team/`). A result is **stale** once the code or the check's definition changes. *Checks passed*, *review* and *approved* are separate facts — a pass never marks a task done.
 - **Where it shows:** `claude-team resume` lists check state for unfinished tasks and flags failing or stale ones; the Office task board shows a badge per task; the Office "add task" API accepts `acceptanceCriteria` and `checks` (names must exist in `config.checks`). A "Run checks" button can later call the same code.
+
+## Review queue
+
+Finished work goes through a human decision that is separate from "the agent says it's done" and from "the checks passed":
+
+1. **Request** — `claude-team review request <task-id> -s "what changed"` (the orchestrator is told to do this once an agent reports done and checks have run). It snapshots the agent's explanation and files from its outbox, the acceptance criteria, the check evidence and a code fingerprint into `.claude-team/review-queue/<task-id>.json`, and sets the task to `review`.
+2. **Look** — `claude-team review` lists what's waiting; `review show <id>` puts explanation, criteria, check state and the diff in one place. It flags *code changed since requested* and stale/failed checks.
+3. **Decide** — `review approve` marks the task done; `review reject -m` sends it back with your note. Both need an interactive terminal, so an agent's shell can't approve its own work. Approval is refused while checks are failed, stale or not run on the current code unless you pass `--accept-unverified` (recorded in the decision). A rejection requires a note, and a task can be re-requested afterwards (history is kept).
+
+Passing checks never approve anything, and approving never rewrites check results. `claude-team resume` lists pending reviews first among next steps; the Office task board has an "Awaiting your review" group. Approve/reject buttons in the Office are not built yet — decisions are CLI-only for now.
 
 ## Cross-Session Messaging (experimental, opt-in)
 
