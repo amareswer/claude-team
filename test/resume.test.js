@@ -61,3 +61,27 @@ describe('buildResume', () => {
     });
   });
 });
+
+describe('buildResume with acceptance checks', () => {
+  it('shows saved check evidence and flags failing checks as a next step', async () => {
+    await withTempCwd(async () => {
+      const { execFileSync } = await import('child_process');
+      const { approveCheck, runTaskChecks } = await import('../lib/checks.js');
+      const git = (...a) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'pipe' });
+      git('init', '-q');
+      const config = minimalConfig({ checks: { unit: { command: 'exit 1' } } });
+      await seed(config, {
+        '.claude-team/config.json': config,
+        '.claude-team/tasks/master.json': { tasks: [{ id: 't9', title: 'Auth', status: 'review', checks: ['unit'], assignedTo: 'backend' }] },
+      });
+      git('add', '-A'); git('commit', '-q', '-m', 'x');
+      await approveCheck('unit');
+      const cfg = await fs.readJson('.claude-team/config.json');
+      await runTaskChecks(cfg, 't9');
+      const r = await buildResume(cfg);
+      expect(r.checks[0]).toMatchObject({ taskId: 't9', overall: 'failed' });
+      expect(r.next.some((n) => n.kind === 'checks' && /t9/.test(n.text))).toBe(true);
+      expect(renderResume(r)).toContain('not review or approval');
+    });
+  });
+});

@@ -717,6 +717,7 @@ function taskRowHtml(t) {
     <div class="qid">${esc(t.id)} · ${esc(t.priority)}${t.status === 'paused' ? ' · ⏸ paused' : ''}</div>
     <div>${esc(t.title)}</div>
     ${t.description ? `<div style="font-size:12px;color:var(--dim);margin-top:2px">${esc(t.description)}</div>` : ''}
+    ${t.checkStatus ? `<div style="font-size:11px;margin-top:3px" title="Acceptance-check evidence only — not review or approval. Run: claude-team check ${esc(t.id)}">${({passed:'✅ checks passed',failed:'❌ checks failed',stale:'♻️ checks stale (code changed)',not_run:'⏳ checks not run',error:'⚠️ checks unreadable'})[t.checkStatus] || esc(t.checkStatus)}</div>` : ''}
     ${finished
       ? `<div style="font-size:12px;color:var(--dim);margin-top:4px">${esc(t.assignedTo)}</div>`
       : `<div style="display:flex;gap:8px;align-items:center;margin-top:6px">

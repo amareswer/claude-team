@@ -69,6 +69,8 @@ Then open one terminal per agent, run `claude` in each, and paste the prompt `cl
 | `claude-team start` | Print the launch instructions for every agent |
 | `claude-team status` | Agent status, context usage, doc token health, task summary (terminal) |
 | `claude-team resume` | Where the project stands: what finished, what's in progress, who's blocked or waiting on review, open questions for you, code changes, and ordered next steps. Built only from `.claude-team/` files and git — no agent session, no tokens. `--json` for scripts. State files that can't be parsed are listed, never silently skipped. |
+| `claude-team check <task-id>` | Runs the task's acceptance checks (named commands from `config.checks`) with timeouts and bounded logs, and saves exit codes, timestamps, git revision and a working-tree fingerprint to `.claude-team/checks/<task-id>.json`. Exit code 0 only if all pass. Never changes the task's status. |
+| `claude-team checks` / `checks approve <name>` | List checks and their approval state / approve a check's exact command (interactive terminal only). |
 | `claude-team office` | Live visual office view of the team in your browser (`--port` to change port, `--no-open` to skip auto-opening a tab). The printed URL carries a per-run access key; the server also validates Host/Origin on every request and WebSocket, so other web pages can't drive your terminals. |
 | `claude-team add` | Add a new worker agent to an existing team |
 | `claude-team remove` | Remove an agent from the team (deletes its instructions, memory doc, and task files) |
@@ -205,6 +207,22 @@ What it can control is which way that crash fails. `moveTask` (`lib/jsonStore.js
 **The gap the file lock can't close:** a lock only protects a single read-then-write pair. It doesn't help when the orchestrator reads `MASTER.md` at the start of a cycle, spends several turns assigning tasks, and only writes it back minutes later — nothing stops another agent or the human from having changed it in between. `ORCHESTRATOR.md` (generated per-project by `lib/generators/orchestrator.js`) bakes in a session-level protocol for exactly that: before writing back to a shared file, the orchestrator re-checks a fingerprint it took when it first read the file; on a mismatch it stops, logs a `CONFLICT` line to `changelog.md`, notifies every affected agent's inbox with a `"type": "conflict"` message, and re-reads + re-applies its change on the current contents instead of overwriting blind. See that file's "🔒 Conflict Detection Protocol" section for the exact steps.
 
 ---
+
+## Acceptance checks
+
+Define named checks in `.claude-team/config.json`, reference them from tasks, and let the CLI be the one thing that runs them:
+
+```json
+{ "checks": { "unit": { "command": "npm test", "timeoutSeconds": 120 } } }
+```
+```json
+{ "id": "task-007", "acceptanceCriteria": ["Invalid login returns 401"], "checks": ["unit"] }
+```
+
+- **A human approves each command.** `claude-team checks approve unit` shows the exact command and asks; the approval is a hash of the definition, so a new or edited command is refused (`needs approval` / `CHANGED`) until approved again. Approval requires an interactive terminal, so an agent's shell can't approve its own checks. (This guards against accidental or agent-edited commands; anyone who can edit `config.json` *and* rewrite the hash can still bypass it — it's a file-based tool.)
+- **`claude-team check <task-id>`** refuses to start if any listed check is undefined or unapproved, otherwise runs each in the task's `workingDir` (must stay inside the project) with its timeout (process tree killed on expiry) and keeps the last 64 KB of output. The orchestrator is instructed to call this when implementation is ready.
+- **Evidence, not acceptance.** Results record task ID, command, start/finish time, exit code, timeout flag, git revision and a fingerprint of all uncommitted and untracked changes (ignoring `.claude-team/`). A result is **stale** once the code or the check's definition changes. *Checks passed*, *review* and *approved* are separate facts — a pass never marks a task done.
+- **Where it shows:** `claude-team resume` lists check state for unfinished tasks and flags failing or stale ones; the Office task board shows a badge per task; the Office "add task" API accepts `acceptanceCriteria` and `checks` (names must exist in `config.checks`). A "Run checks" button can later call the same code.
 
 ## Cross-Session Messaging (experimental, opt-in)
 
