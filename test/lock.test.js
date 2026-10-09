@@ -300,3 +300,15 @@ describe('failure AFTER publication must not leak a live-owned lock', () => {
     expect(await lockFiles(file)).toEqual([]);
   });
 });
+
+describe('path spelling', () => {
+  it('works when the path is not in path.join-normalised form (Windows separators / "./" segments)', async () => {
+    const file = await tmpFile();
+    const odd = `${path.dirname(file)}${path.sep}.${path.sep}${path.basename(file)}`; // "<dir>/./shared.json"
+    const lock = await acquireLock(odd, { timeoutMs: 1000 });
+    expect(await lockFiles(file)).toHaveLength(1);
+    await lock.release();
+    expect(await lockFiles(file)).toEqual([]);
+    await withLock(odd, async () => {}, { timeoutMs: 1000 });
+  });
+});
