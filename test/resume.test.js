@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'fs-extra';
-import { withTempCwd, minimalConfig } from './helpers.js';
+import { withTempCwd, minimalConfig, assertTempCwd } from './helpers.js';
 import { buildResume, renderResume } from '../lib/resume.js';
 
 async function seed(config, files = {}) {
+  assertTempCwd();
   await fs.ensureDir('.claude-team/tasks');
   for (const a of config.agents) {
     await fs.writeJson(`.claude-team/tasks/${a.name}-status.json`, { status: 'idle', lastUpdated: '2026-10-01T10:00:00Z' });
@@ -67,7 +68,7 @@ describe('buildResume with acceptance checks', () => {
     await withTempCwd(async () => {
       const { execFileSync } = await import('child_process');
       const { approveCheck, runTaskChecks } = await import('../lib/checks.js');
-      const git = (...a) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'pipe' });
+      const git = (...a) => { assertTempCwd(); return execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'pipe' }); };
       git('init', '-q');
       const config = minimalConfig({ checks: { unit: { command: 'exit 1' } } });
       await seed(config, {
@@ -91,7 +92,7 @@ describe('buildResume with the review queue', () => {
     await withTempCwd(async () => {
       const { execFileSync } = await import('child_process');
       const { requestReview } = await import('../lib/review.js');
-      const git = (...a) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'pipe' });
+      const git = (...a) => { assertTempCwd(); return execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'pipe' }); };
       git('init', '-q');
       const config = minimalConfig();
       await seed(config, {

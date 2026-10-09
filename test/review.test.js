@@ -2,14 +2,15 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs-extra';
 import path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
-import { withTempCwd, minimalConfig } from './helpers.js';
+import { withTempCwd, minimalConfig, assertTempCwd } from './helpers.js';
 import { approveCheck, runTaskChecks } from '../lib/checks.js';
 import { requestReview, approveReview, rejectReview, listReviews, reviewDetail } from '../lib/review.js';
 
-const git = (...a) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'pipe' });
+const git = (...a) => { assertTempCwd(); return execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'pipe' }); };
 const master = () => fs.readJson('.claude-team/tasks/master.json');
 
 async function project({ checks, taskExtra = {} } = {}) {
+  assertTempCwd();
   git('init', '-q');
   await fs.writeFile('app.js', 'one\n');
   await fs.ensureDir('.claude-team/tasks');
@@ -155,6 +156,127 @@ describe('human-only decisions', () => {
         expect(r.stderr).toMatch(/interactive terminal/);
       }
       expect((await master()).tasks[0].status).toBe('in_progress');
+    });
+  });
+});
+
+describe('concurrent decisions: exactly one wins, the rest get 409', () => {
+  const outcome = (rs) => ({ ok: rs.filter((r) => r.status === 'fulfilled').length, conflicts: rs.filter((r) => r.status === 'rejected' && r.reason.statusCode === 409 && r.reason.code === 'NOT_PENDING').length });
+
+  it('simultaneous rejects: one decision, one inbox message', async () => {
+    await withTempCwd(async () => {
+      const config = await project();
+      await requestReview(config, 'task-1');
+      const rs = await Promise.allSettled([
+        rejectReview(config, 'task-1', { note: 'first' }),
+        rejectReview(config, 'task-1', { note: 'second' }),
+        rejectReview(config, 'task-1', { note: 'third' }),
+      ]);
+      expect(outcome(rs)).toEqual({ ok: 1, conflicts: 2 });
+      const rec = await fs.readJson('.claude-team/review-queue/task-1.json');
+      const winner = rs.find((r) => r.status === 'fulfilled').value;
+      expect(rec.decision.note).toBe(winner.note); // not overwritten by a loser
+      expect((await fs.readJson('.claude-team/tasks/backend-inbox.json')).messages).toHaveLength(1);
+    });
+  });
+
+  it('simultaneous approves: one decision', async () => {
+    await withTempCwd(async () => {
+      const config = await project();
+      await requestReview(config, 'task-1');
+      const rs = await Promise.allSettled([approveReview(config, 'task-1', { note: 'a' }), approveReview(config, 'task-1', { note: 'b' })]);
+      expect(outcome(rs)).toEqual({ ok: 1, conflicts: 1 });
+      expect((await fs.readJson('.claude-team/review-queue/task-1.json')).decision.note).toBe(rs.find((r) => r.status === 'fulfilled').value.note);
+    });
+  });
+
+  it('approve racing reject (20 rounds): never both; the loser leaves no side effects', async () => {
+    for (let i = 0; i < 20; i++) {
+      await withTempCwd(async () => {
+        const config = await project();
+        await requestReview(config, 'task-1');
+        const rs = await Promise.allSettled([approveReview(config, 'task-1', { note: 'ok' }), rejectReview(config, 'task-1', { note: 'no' })]);
+        expect(outcome(rs)).toEqual({ ok: 1, conflicts: 1 });
+        const rec = await fs.readJson('.claude-team/review-queue/task-1.json');
+        const status = (await master()).tasks[0].status;
+        const msgs = (await fs.readJson('.claude-team/tasks/backend-inbox.json')).messages;
+        if (rec.state === 'approved') { expect(status).toBe('done'); expect(msgs).toHaveLength(0); }
+        else { expect(rec.state).toBe('rejected'); expect(status).toBe('assigned'); expect(msgs).toHaveLength(1); }
+      });
+    }
+  }, 60000);
+
+  it('a decision made against an OLD request version is refused after a re-request', async () => {
+    await withTempCwd(async () => {
+      const config = await project();
+      const first = await requestReview(config, 'task-1');
+      await rejectReview(config, 'task-1', { note: 'redo' });
+      const second = await requestReview(config, 'task-1');
+      expect(second.requestId).not.toBe(first.requestId);
+      await expect(approveReview(config, 'task-1', { expectedRequestId: first.requestId })).rejects.toMatchObject({ code: 'STALE_REQUEST', statusCode: 409 });
+      await expect(rejectReview(config, 'task-1', { note: 'x', expectedRequestId: first.requestId })).rejects.toMatchObject({ code: 'STALE_REQUEST' });
+      expect((await fs.readJson('.claude-team/review-queue/task-1.json')).state).toBe('pending'); // untouched
+      await approveReview(config, 'task-1', { expectedRequestId: second.requestId });
+    });
+  });
+});
+
+describe('base revision: committed work stays visible', () => {
+  const commitAt = (date, msg) => (assertTempCwd(), execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-am', msg], { stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date } }));
+
+  async function committedWork(taskExtra = {}) {
+    assertTempCwd();
+    git('init', '-q');
+    await fs.writeFile('app.js', 'v0\n');
+    await fs.ensureDir('.claude-team/tasks');
+    const config = minimalConfig({});
+    await fs.writeJson('.claude-team/config.json', config);
+    await fs.writeJson('.claude-team/tasks/master.json', { tasks: [{ id: 'task-1', title: 'T', status: 'in_progress', assignedTo: 'backend', createdAt: '2026-02-01T00:00:00Z', ...taskExtra }] });
+    await fs.writeJson('.claude-team/tasks/backend-inbox.json', { tasks: [{ id: 'task-1', assignedAt: '2026-02-01T00:00:00Z' }], messages: [] });
+    git('add', '-A'); commitAt('2026-01-01T00:00:00Z', 'before assignment');
+    const before = execFileSync('git', ['rev-parse', 'HEAD']).toString().trim();
+    await fs.writeFile('app.js', 'v1 feature\n'); // agent's work, then committed
+    commitAt('2026-03-01T00:00:00Z', 'agent: implement feature');
+    return { config, before };
+  }
+
+  it('infers the start from the assignment time, so committed work shows up even with a clean tree', async () => {
+    await withTempCwd(async () => {
+      const { config, before } = await committedWork();
+      const rec = await requestReview(config, 'task-1');
+      expect(rec).toMatchObject({ baseRevision: before, baseSource: 'inferred from assignment time' });
+      const d = await reviewDetail(config, 'task-1');
+      expect(d.diff.stat).toContain('app.js');           // diff vs HEAD would have been empty
+      expect(d.diff.patch).toContain('+v1 feature');
+      expect(d.diff.commits.join('\n')).toContain('agent: implement feature');
+    });
+  });
+
+  it('prefers a base recorded at assignment, and an explicit --base beats both', async () => {
+    await withTempCwd(async () => {
+      const { config, before } = await committedWork({ baseRevision: 'HEAD~1' });
+      const head = execFileSync('git', ['rev-parse', 'HEAD']).toString().trim();
+      expect((await requestReview(config, 'task-1')).baseSource).toBe('recorded at assignment');
+      const explicit = await requestReview(config, 'task-1', { baseRevision: head });
+      expect(explicit).toMatchObject({ baseRevision: head, baseSource: 'explicit' });
+      expect(before).not.toBe(head);
+    });
+  });
+
+  it('assigned before the first commit: diffs against the empty tree', async () => {
+    await withTempCwd(async () => {
+      assertTempCwd();
+      git('init', '-q');
+      await fs.writeFile('app.js', 'only\n');
+      await fs.ensureDir('.claude-team/tasks');
+      const config = minimalConfig({});
+      await fs.writeJson('.claude-team/config.json', config);
+      await fs.writeJson('.claude-team/tasks/master.json', { tasks: [{ id: 'task-1', title: 'T', status: 'in_progress', assignedTo: 'backend', createdAt: '2020-01-01T00:00:00Z' }] });
+      await fs.writeJson('.claude-team/tasks/backend-inbox.json', { tasks: [], messages: [] });
+      git('add', '-A'); commitAt('2026-03-01T00:00:00Z', 'first');
+      const rec = await requestReview(config, 'task-1');
+      expect(rec.baseSource).toBe('inferred (no commits before assignment)');
+      expect((await reviewDetail(config, 'task-1')).diff.stat).toContain('app.js');
     });
   });
 });

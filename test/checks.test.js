@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'fs-extra';
 import { execFileSync } from 'child_process';
-import { withTempCwd, minimalConfig } from './helpers.js';
+import { withTempCwd, minimalConfig, assertTempCwd } from './helpers.js';
 import { approveCheck, approvalState, runTaskChecks, taskCheckStatus, codeState } from '../lib/checks.js';
 
-const sh = (...a) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'pipe' });
+const sh = (...a) => { assertTempCwd(); return execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'pipe' }); };
 
 async function project(checks, task = {}) {
+  assertTempCwd();
   sh('init', '-q');
   await fs.writeFile('app.txt', 'v1\n');
   await fs.ensureDir('.claude-team/tasks');

@@ -86,3 +86,18 @@ export async function withTempCwd(fn) {
 export function findLeftoverPlaceholders(text) {
   return text.match(/\$\{[^}]*\}|\bundefined\b|\bNaN\b/g) || [];
 }
+
+
+/**
+ * Safety net for tests that write files or run git against process.cwd():
+ * throws unless the cwd is inside the OS temp dir. A test that outlives its
+ * timeout can otherwise carry on after withTempCwd's cleanup has moved the
+ * cwd back to the real repo and start writing/committing there.
+ */
+export function assertTempCwd() {
+  const real = fs.realpathSync(process.cwd());
+  const tmp = fs.realpathSync(os.tmpdir());
+  if (real !== tmp && !real.startsWith(tmp + path.sep)) {
+    throw new Error(`refusing to run: cwd ${real} is not inside the temp dir`);
+  }
+}

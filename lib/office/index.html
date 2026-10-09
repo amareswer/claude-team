@@ -813,7 +813,7 @@ function renderReviewDrawer(confirm = null) {
       ${(d.live.checks.checks || []).map(c => `<div class="kv" style="color:var(--dim)">${esc(c.name)}: ${esc(c.state)}${c.exitCode != null ? ` (exit ${esc(c.exitCode)})` : ''}</div>`).join('')}
       ${d.live.codeChanged ? '<div class="kv" style="color:#b25a00">⚠ The code has changed since this review was requested.</div>' : ''}
     </section>
-    <section><h4>Code changes <span style="text-transform:none;letter-spacing:0">${d.diff ? '(vs ' + esc(d.diff.base) + ')' : ''}</span></h4>${diffHtml(d.diff)}</section>
+    <section><h4>Code changes <span style="text-transform:none;letter-spacing:0">${d.diff ? '(vs ' + esc(d.diff.base.slice(0, 10)) + ' — ' + esc(d.diff.baseSource) + ')' : ''}</span></h4>${d.diff && d.diff.commits.length ? `<p style="font-size:12px;color:var(--dim)">Commits since then: ${d.diff.commits.map(esc).join(' · ')}</p>` : ''}${diffHtml(d.diff)}</section>
     ${pending ? `
     <section><h4>Your decision</h4>
       <textarea id="review-note" rows="3" style="width:100%;font:inherit;font-size:13px;padding:6px" placeholder="Note (required to reject — it goes to ${esc(d.assignedTo || 'the assignee')}'s inbox)"></textarea>
@@ -837,7 +837,7 @@ async function decideReview(kind) {
   if (kind === 'reject' && !note) { err.textContent = 'Write a note saying what needs to change.'; return; }
   const acceptUnverified = !!document.getElementById('review-unverified')?.checked;
   try {
-    await post('/api/review/' + kind, { id: reviewId, note, acceptUnverified });
+    await post('/api/review/' + kind, { id: reviewId, note, acceptUnverified, requestId: reviewData?.requestId });
     await poll();
     openTasksDrawer();
   } catch (e) {
