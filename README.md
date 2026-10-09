@@ -212,6 +212,10 @@ What it can control is which way that crash fails. `moveTask` (`lib/jsonStore.js
 
 ---
 
+## Pilot
+
+Running a small pilot? See [`docs/pilot/PILOT_GUIDE.md`](docs/pilot/PILOT_GUIDE.md) (one workflow, setup, known limitations, how to report bugs), [`docs/pilot/FEEDBACK.md`](docs/pilot/FEEDBACK.md) (daily log, weekly questions, bug template) and [`docs/pilot/WINDOWS_SMOKE_TEST.md`](docs/pilot/WINDOWS_SMOKE_TEST.md) (manual Office checks CI can't cover).
+
 ## Acceptance checks
 
 Define named checks in `.claude-team/config.json`, reference them from tasks, and let the CLI be the one thing that runs them:
