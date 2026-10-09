@@ -268,3 +268,35 @@ describe('leftover temp files', () => {
     expect(left).toEqual([`${base}.lock.tmp-${process.pid}-live`]);
   });
 });
+
+describe('failure AFTER publication must not leak a live-owned lock', () => {
+  it('an error in the verification step removes the published lock; a retry then succeeds', async () => {
+    const file = await tmpFile();
+    await expect(acquireLock(file, { hooks: { afterPublish: () => { throw new Error('boom after publish'); } } }))
+      .rejects.toThrow('boom after publish');
+    expect(await lockFiles(file)).toEqual([]); // not left behind owned by our (live) pid
+    const lock = await acquireLock(file, { timeoutMs: 500 }); // would time out if it had leaked
+    await lock.release();
+  });
+
+  it('a real filesystem error during verification (unreadable rival file) also cleans up, and retry works once fixed', async () => {
+    if (process.getuid?.() === 0) return; // root ignores modes
+    const file = await tmpFile();
+    const rival = `${file}.lock.9`;
+    await expect(acquireLock(file, {
+      hooks: {
+        afterPublish: async () => {
+          await fs.writeJson(rival, { pid: 999999, token: 'r', acquiredAt: new Date().toISOString() });
+          await fs.chmod(rival, 0o000);
+        },
+      },
+    })).rejects.toThrow(/EACCES/);
+    const left = await lockFiles(file);
+    expect(left).toEqual([`${path.basename(file)}.lock.9`]); // only the foreign file; ours was removed
+    await fs.chmod(rival, 0o644);
+    await fs.remove(rival);
+    const lock = await acquireLock(file, { timeoutMs: 500 });
+    await lock.release();
+    expect(await lockFiles(file)).toEqual([]);
+  });
+});
