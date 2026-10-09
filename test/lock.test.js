@@ -254,3 +254,17 @@ describe('fail-closed filesystem errors', () => {
     }
   });
 });
+
+describe('leftover temp files', () => {
+  it('removes temp files of dead acquirers, keeps those of live ones', async () => {
+    const file = await tmpFile();
+    const dir = path.dirname(file);
+    const base = path.basename(file);
+    await fs.writeFile(path.join(dir, `${base}.lock.tmp-999999-abc`), '{}');
+    await fs.writeFile(path.join(dir, `${base}.lock.tmp-${process.pid}-live`), '{}');
+    const lock = await acquireLock(file);
+    await lock.release();
+    const left = (await fs.readdir(dir)).filter((f) => f.includes('.lock'));
+    expect(left).toEqual([`${base}.lock.tmp-${process.pid}-live`]);
+  });
+});

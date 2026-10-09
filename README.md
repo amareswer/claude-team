@@ -51,6 +51,7 @@ cd your-project
 claude-team init       # 🧙 Answer a few questions — the team is generated
 claude-team start      # 🚀 Exact launch command for every agent
 claude-team status     # 📊 Terminal view: agents, token usage, doc health
+claude-team resume     # ▶ Where you left off + suggested next steps (free, no agent)
 claude-team office     # 🏢 Visual office view in your browser (live)
 ```
 
@@ -67,6 +68,7 @@ Then open one terminal per agent, run `claude` in each, and paste the prompt `cl
 | `claude-team init` | Interactive wizard — generates the full team (asks before overwriting an existing one) |
 | `claude-team start` | Print the launch instructions for every agent |
 | `claude-team status` | Agent status, context usage, doc token health, task summary (terminal) |
+| `claude-team resume` | Where the project stands: what finished, what's in progress, who's blocked or waiting on review, open questions for you, code changes, and ordered next steps. Built only from `.claude-team/` files and git — no agent session, no tokens. `--json` for scripts. State files that can't be parsed are listed, never silently skipped. |
 | `claude-team office` | Live visual office view of the team in your browser (`--port` to change port, `--no-open` to skip auto-opening a tab). The printed URL carries a per-run access key; the server also validates Host/Origin on every request and WebSocket, so other web pages can't drive your terminals. |
 | `claude-team add` | Add a new worker agent to an existing team |
 | `claude-team remove` | Remove an agent from the team (deletes its instructions, memory doc, and task files) |
