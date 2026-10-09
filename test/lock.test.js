@@ -241,7 +241,7 @@ describe('deterministic acquisition interleavings', () => {
 });
 
 describe('fail-closed filesystem errors', () => {
-  it('an unreadable lock file is an error, not an absent lock', async () => {
+  it.skipIf(process.platform === 'win32')('an unreadable lock file is an error, not an absent lock', async () => {
     const file = await tmpFile();
     await plant(file, 1, { pid: process.pid, token: 'x', acquiredAt: new Date().toISOString() });
     const lockPath = `${file}.lock.1`;
@@ -279,7 +279,7 @@ describe('failure AFTER publication must not leak a live-owned lock', () => {
     await lock.release();
   });
 
-  it('a real filesystem error during verification (unreadable rival file) also cleans up, and retry works once fixed', async () => {
+  it.skipIf(process.platform === 'win32')('a real filesystem error during verification (unreadable rival file) also cleans up, and retry works once fixed', async () => {
     if (process.getuid?.() === 0) return; // root ignores modes
     const file = await tmpFile();
     const rival = `${file}.lock.9`;

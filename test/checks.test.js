@@ -23,7 +23,7 @@ const reload = () => fs.readJson('.claude-team/config.json');
 describe('approval gate', () => {
   it('refuses to run unapproved or changed checks, and runs nothing', async () => {
     await withTempCwd(async () => {
-      const { config } = await project({ unit: { command: 'touch RAN', timeoutSeconds: 5 } });
+      const { config } = await project({ unit: { command: `node -e "require('fs').writeFileSync('RAN','')"`, timeoutSeconds: 5 } });
       expect(approvalState(config, 'unit')).toBe('unapproved');
       await expect(runTaskChecks(config, 'task-1')).rejects.toMatchObject({ code: 'NOT_APPROVED' });
       expect(await fs.pathExists('RAN')).toBe(false);
@@ -32,7 +32,7 @@ describe('approval gate', () => {
       let c = await reload();
       expect(approvalState(c, 'unit')).toBe('approved');
 
-      c.checks.unit.command = 'touch RAN && echo tampered';
+      c.checks.unit.command = `node -e "require('fs').writeFileSync('RAN','')" && echo tampered`;
       expect(approvalState(c, 'unit')).toBe('changed');
       await expect(runTaskChecks(c, 'task-1')).rejects.toMatchObject({ code: 'NOT_APPROVED' });
       expect(await fs.pathExists('RAN')).toBe(false);
@@ -43,7 +43,7 @@ describe('approval gate', () => {
 describe('running checks', () => {
   it('records exit code, timestamps, revision; never changes task status', async () => {
     await withTempCwd(async () => {
-      await project({ ok: { command: 'echo hello' }, bad: { command: 'echo nope >&2; exit 3' } });
+      await project({ ok: { command: 'echo hello' }, bad: { command: `node -e "console.error('nope'); process.exit(3)"` } });
       await approveCheck('ok'); await approveCheck('bad');
       const config = await reload();
       const recs = await runTaskChecks(config, 'task-1');
@@ -64,7 +64,7 @@ describe('running checks', () => {
 
   it('kills a command that exceeds its timeout', async () => {
     await withTempCwd(async () => {
-      await project({ slow: { command: 'sleep 10', timeoutSeconds: 0.4 } });
+      await project({ slow: { command: `node -e "setTimeout(() => {}, 10000)"`, timeoutSeconds: 0.4 } });
       await approveCheck('slow');
       const t0 = Date.now();
       const [r] = await runTaskChecks(await reload(), 'task-1');
@@ -75,7 +75,7 @@ describe('running checks', () => {
 
   it('bounds captured output', async () => {
     await withTempCwd(async () => {
-      await project({ loud: { command: 'head -c 600000 /dev/zero | tr "\\0" x' } });
+      await project({ loud: { command: `node -e "process.stdout.write('x'.repeat(600000))"` } });
       await approveCheck('loud');
       const [r] = await runTaskChecks(await reload(), 'task-1');
       expect(r.outputTail.length).toBeLessThanOrEqual(64 * 1024);
