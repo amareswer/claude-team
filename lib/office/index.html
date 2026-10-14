@@ -665,6 +665,10 @@ function renderBossDrawer() {
       <h4>Hand out a task</h4>
       <div class="field"><label>Title</label><input id="task-title" placeholder="e.g. Add login page"></div>
       <div class="field"><label>Description</label><textarea id="task-desc" rows="3" placeholder="What needs doing, and what does done look like?"></textarea></div>
+      <div class="field"><label>Acceptance criteria <span style="color:var(--dim)">(one per line, optional)</span></label><textarea id="task-criteria" rows="3" placeholder="e.g. Login rejects a wrong password&#10;Existing tests still pass"></textarea></div>
+      ${(state.checks || []).length ? `<div class="field"><label>Checks to run before review</label>
+        ${state.checks.map(c => `<label style="display:block;font-weight:normal"><input type="checkbox" class="task-check" value="${esc(c.name)}" style="width:auto;display:inline;margin-right:4px"> ${esc(c.name)} <span style="color:var(--dim)">· ${esc(c.command)}${c.approval === 'approved' ? '' : ' · ⚠ ' + (c.approval === 'changed' ? 'changed — re-approve' : 'needs approval') + ' (claude-team checks approve ' + esc(c.name) + ')'}</span></label>`).join('')}
+        </div>` : '<p style="font-size:12px;color:var(--dim)">No checks defined yet. Add them to <code>.claude-team/config.json</code> and approve with <code>claude-team checks approve &lt;name&gt;</code>.</p>'}
       <div class="field"><label>Priority</label><select id="task-prio"><option>high</option><option selected>medium</option><option>low</option></select></div>
       <div class="field"><label>Assign to</label><select id="task-assign">
         <option value="">unassigned — orchestrator decides</option>
@@ -724,6 +728,7 @@ function taskRowHtml(t) {
     <div class="qid">${esc(t.id)} · ${esc(t.priority)}${t.status === 'paused' ? ' · ⏸ paused' : ''}${t.status === 'review' ? ' · 👀 review: claude-team review show ' + esc(t.id) : ''}</div>
     <div>${esc(t.title)}</div>
     ${t.description ? `<div style="font-size:12px;color:var(--dim);margin-top:2px">${esc(t.description)}</div>` : ''}
+    ${(t.acceptanceCriteria || []).length ? `<ul style="font-size:12px;color:var(--dim);margin:4px 0 0 16px;padding:0">${t.acceptanceCriteria.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
     ${t.checkStatus ? `<div style="font-size:11px;margin-top:3px" title="Acceptance-check evidence only — not review or approval. Run: claude-team check ${esc(t.id)}">${({passed:'✅ checks passed',failed:'❌ checks failed',stale:'♻️ checks stale (code changed)',not_run:'⏳ checks not run',error:'⚠️ checks unreadable'})[t.checkStatus] || esc(t.checkStatus)}</div>` : ''}
     ${finished
       ? `<div style="font-size:12px;color:var(--dim);margin-top:4px">${esc(t.assignedTo)}</div>`
@@ -974,6 +979,8 @@ async function createTask() {
       title: document.getElementById('task-title').value,
       description: document.getElementById('task-desc').value,
       priority: document.getElementById('task-prio').value,
+      acceptanceCriteria: document.getElementById('task-criteria').value.split('\n').map(l => l.trim()).filter(Boolean),
+      checks: [...document.querySelectorAll('.task-check:checked')].map(c => c.value),
       assignTo: document.getElementById('task-assign').value || undefined,
     });
     await poll();

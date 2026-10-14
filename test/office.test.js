@@ -142,6 +142,35 @@ describe('office review decisions', () => {
   });
 });
 
+describe('office task form: criteria and checks', () => {
+  let cookie;
+  const auth = () => ({ host: `localhost:${PORT}`, 'content-type': 'application/json', cookie, origin: `http://localhost:${PORT}` });
+  const post = (p, body) => request({ path: p, method: 'POST', headers: auth() }, JSON.stringify(body));
+
+  beforeAll(async () => {
+    const config = await fs.readJson(path.join(dir, '.claude-team/config.json'));
+    config.checks = { unit: { command: 'node -e "process.exit(0)"' } };
+    await fs.writeJson(path.join(dir, '.claude-team/config.json'), config);
+    const boot = await request({ path: `/?key=${key}`, headers: { host: `localhost:${PORT}` } });
+    cookie = boot.headers['set-cookie'][0].split(';')[0];
+  });
+
+  it('lists defined checks with their approval state', async () => {
+    const state = JSON.parse((await request({ path: '/api/state', headers: auth() })).body);
+    expect(state.checks).toEqual([{ name: 'unit', command: 'node -e "process.exit(0)"', approval: 'unapproved' }]);
+  });
+
+  it('stores criteria and checks on the new task, and rejects unknown checks', async () => {
+    const bad = await post('/api/task', { title: 'T', description: 'D', checks: ['nope'] });
+    expect(bad.status).toBe(400);
+    const ok = await post('/api/task', { title: 'T', description: 'D', acceptanceCriteria: ['  works ', ''], checks: ['unit'] });
+    expect(ok.status).toBe(200);
+    const id = JSON.parse(ok.body).id;
+    const master = await fs.readJson(path.join(dir, '.claude-team/tasks/master.json'));
+    expect(master.tasks.find((t) => t.id === id)).toMatchObject({ acceptanceCriteria: ['works'], checks: ['unit'] });
+  });
+});
+
 describe('one Office per project', () => {
   const start = (port) => {
     const c = spawn(process.execPath, [bin, 'office', '--port', String(port), '--no-open'], { cwd: dir });
