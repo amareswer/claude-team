@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs-extra';
 import os from 'os';
 import path from 'path';
@@ -181,5 +181,53 @@ describe('applyProjectPermissions — CLI access', () => {
     const r = await checkProjectPermissions();
     expect(r.ok).toBe(false);
     expect(r.missing.join(' ')).toMatch(/launcher/);
+  });
+});
+
+import { validateDomain } from '../lib/permissions.js';
+
+describe('network allowlist', () => {
+  it('validateDomain accepts hosts and wildcards, normalises case, rejects URLs/paths/ports/bare words', () => {
+    expect(validateDomain(' Registry.NPMJS.org ')).toBe('registry.npmjs.org');
+    expect(validateDomain('*.npmjs.org')).toBe('*.npmjs.org');
+    for (const bad of ['https://registry.npmjs.org', 'npmjs.org/x', 'host:443', 'localhost', '*', '', 'a b.com']) expect(() => validateDomain(bad)).toThrow(/not a hostname/);
+  });
+  it('mergeSettings writes no network key by default, and adds configured hosts without duplicating or dropping the user\'s', () => {
+    expect(mergeSettings(null).sandbox.network).toBeUndefined();
+    const s = mergeSettings({ sandbox: { network: { allowedDomains: ['mine.example.com'] } } }, 'darwin', { allowedDomains: ['registry.npmjs.org', 'mine.example.com'] });
+    expect(s.sandbox.network.allowedDomains).toEqual(['mine.example.com', 'registry.npmjs.org']);
+    expect(mergeSettings(s, 'darwin', { allowedDomains: ['registry.npmjs.org'] })).toEqual(s);
+  });
+  it('removeDomains takes a host back out', () => {
+    const s = mergeSettings({ sandbox: { network: { allowedDomains: ['a.com', 'b.com'] } } }, 'darwin', { removeDomains: ['a.com'] });
+    expect(s.sandbox.network.allowedDomains).toEqual(['b.com']);
+  });
+});
+
+describe('permissions --allow-domain / --remove-domain', () => {
+  let dir, prev;
+  beforeEach(async () => { prev = process.cwd(); dir = await fs.mkdtemp(path.join(os.tmpdir(), 'perm-')); process.chdir(dir); await fs.outputJson('.claude-team/config.json', { projectName: 'P', agents: [] }); });
+  afterEach(async () => { process.chdir(prev); await fs.remove(dir); process.exitCode = 0; });
+
+  it('saves the host in config.json and opens it in the sandbox; check then passes, and removal closes it again', async () => {
+    const { runPermissions } = await import('../lib/permissions.js');
+    await runPermissions({ allowDomain: ['registry.npmjs.org'] });
+    expect((await fs.readJson('.claude-team/config.json')).allowedDomains).toEqual(['registry.npmjs.org']);
+    expect((await fs.readJson('.claude/settings.json')).sandbox.network.allowedDomains).toEqual(['registry.npmjs.org']);
+    expect((await checkProjectPermissions()).ok).toBe(true);
+    await fs.writeJson('.claude/settings.json', { ...(await fs.readJson('.claude/settings.json')), sandbox: { ...(await fs.readJson('.claude/settings.json')).sandbox, network: { allowedDomains: [] } } });
+    expect((await checkProjectPermissions()).missing.join(' ')).toMatch(/registry\.npmjs\.org/);
+    await applyProjectPermissions();
+    await runPermissions({ removeDomain: ['registry.npmjs.org'] });
+    expect((await fs.readJson('.claude-team/config.json')).allowedDomains).toBeUndefined();
+    expect((await fs.readJson('.claude/settings.json')).sandbox.network.allowedDomains).toEqual([]);
+  });
+  it('refuses a bad host and changes nothing', async () => {
+    const { runPermissions } = await import('../lib/permissions.js');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runPermissions({ allowDomain: ['https://evil.example/x'] });
+    expect(process.exitCode).toBe(1);
+    expect((await fs.readJson('.claude-team/config.json')).allowedDomains).toBeUndefined();
+    spy.mockRestore();
   });
 });
