@@ -79,7 +79,7 @@ Useful any time: `claude-team status`, `claude-team review`, `claude-team resume
 - **Office task form** has no fields for acceptance criteria/checks (see step 3).
 - **Checks are defined by hand-editing `config.json`**, then approved with the CLI.
 - **Review diffs** start from where the task was assigned (recorded or inferred from timestamps). If several agents commit to the same checkout, the diff/commit list can include someone else's work. No per-agent git worktrees yet.
-- **No usage limits or loop detection.** An agent can burn through your subscription limits; you are the circuit breaker.
+- **Spend limits are opt-in and partial.** Set `limits` in `config.json` (or Your Inbox → Spend limits) to warn at 80% and pause an agent's auto-checks at 100%. They only see office-launched agents, are checked every few seconds (a turn in progress can overshoot), and "$" is an API-equivalent estimate. Idle auto-checks back off automatically. There is no detection of an agent looping *while it is actively working*.
 - **One Office per project**; token totals are per Office run.
 - **A crash can leave a review decision half-applied** → `claude-team resume` will tell you; fix with `claude-team review repair`.
 - **Locks are same-machine only** (local disk). A reused process id can make a lock wait until it times out (it fails safe, not unsafe).

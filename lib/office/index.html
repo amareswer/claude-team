@@ -372,16 +372,11 @@ let prevBlocked = null;       // for notifications: blocked/paused agent names a
 let prevNeedsPrompt = null;   // for notifications: agents waiting on a terminal prompt at last poll
 let notifyEnabled = localStorage.getItem('office-notify') === '1';
 
-// API-equivalent $ per MTok [input, output]; cache writes bill at 1.25× input,
-// cache reads at 0.1×. "default" is assumed Sonnet — it's an estimate either way.
-const PRICING = { opus: [5, 25], sonnet: [3, 15], haiku: [1, 5], default: [3, 15] };
-
-function costFor(u, model) {
-  if (!u) return 0;
-  const [inP, outP] = PRICING[model] || PRICING.default;
-  return (u.inputTokens * inP + u.outputTokens * outP
-        + u.cacheCreationTokens * 1.25 * inP + u.cacheReadTokens * 0.1 * inP) / 1e6;
-}
+// API-equivalent $ estimate — priced server-side (lib/guard.js) so the spend
+// limits and this display can never disagree.
+function costFor(u) { return u?.costUsd || 0; }
+let prevGuardLevels = null;  // for notifications: budget level per agent at last poll
+let prevSpinning = null;     // for notifications: agents in idle-spin backoff at last poll
 function formatCost(c) { return c >= 10 ? `$${c.toFixed(0)}` : c >= 0.1 ? `$${c.toFixed(2)}` : `$${c.toFixed(3)}`; }
 
 function emojiFor(agent, idx) {
@@ -416,6 +411,8 @@ function deskHtml(agent, idx, arrive) {
       <div class="ctxbar"><div class="${ctxClass}" style="width:${Math.min(ctx,100)}%"></div></div>
       ${agent.currentTaskTitle ? `<div class="tasktag">📌 ${esc(agent.currentTaskTitle)}</div>` : ''}
       ${agent.tokenUsage?.total > 0 ? `<div class="tasktag">🪙 ${formatTokens(agent.tokenUsage.total)}</div>` : ''}
+      ${agent.guard?.level === 'stop' ? `<div class="tasktag" style="color:var(--red)" title="${esc(agent.guard.reason)}">⛔ budget reached</div>` : agent.guard?.level === 'warn' ? `<div class="tasktag" title="${esc(agent.guard.reason)}">⚠️ near budget</div>` : ''}
+      ${agent.spinning ? `<div class="tasktag" title="No new input for several auto-checks — nudges are backing off until something changes">🔁 idle, backing off</div>` : ''}
     </div>
   </div>`;
 }
@@ -460,9 +457,11 @@ function render() {
   document.getElementById('h-master').textContent = `📄 MASTER ${mPct}%`;
   const tokChip = document.getElementById('h-tokens');
   if (state.totalTeamTokens > 0) {
-    const teamCost = state.agents.reduce((sum, a) => sum + costFor(a.tokenUsage, a.model), 0);
+    const teamCost = state.agents.reduce((sum, a) => sum + costFor(a.tokenUsage), 0);
+    const L = state.limits;
+    const limitBits = [L.teamCostUsd && `of ${formatCost(L.teamCostUsd)}`, L.teamTokens && `of ${formatTokens(L.teamTokens)} tok`].filter(Boolean);
     tokChip.style.display = '';
-    tokChip.textContent = `🪙 ${formatTokens(state.totalTeamTokens)} tokens · ≈${formatCost(teamCost)}`;
+    tokChip.textContent = `${state.guardTeam.level === 'stop' ? '⛔' : state.guardTeam.level === 'warn' ? '⚠️' : '🪙'} ${formatTokens(state.totalTeamTokens)} tokens · ≈${formatCost(teamCost)}${limitBits.length ? ' ' + limitBits.join(' · ') : ''}`;
     tokChip.title = 'Real usage from launched agents\' session transcripts, cumulative across office runs. $ is the API-equivalent estimate (cache writes 1.25×, reads 0.1× input rate); "default" models priced as Sonnet.';
   } else tokChip.style.display = 'none';
   document.getElementById('h-bell').textContent = notifyEnabled ? '🔔' : '🔕';
@@ -545,7 +544,9 @@ function statusHtml(a) {
     <br>Model: ${MODEL_LABEL[a.model] || esc(a.model)}
     <br>Context used: ${a.contextUsedPercent || 0}% (self-reported) · Memory doc: ${docPct}% of ${a.docBudget}t · Inbox: ${a.inboxCount}
     ${tokenUsageHtml(a.tokenUsage)}
-    ${a.tokenUsage?.total > 0 ? ` <span style="color:var(--dim)" title="API-equivalent estimate; cache writes 1.25×, reads 0.1× input rate">· ≈${formatCost(costFor(a.tokenUsage, a.model))}</span>` : ''}
+    ${a.tokenUsage?.total > 0 ? ` <span style="color:var(--dim)" title="API-equivalent estimate; cache writes 1.25×, reads 0.1× input rate">· ≈${formatCost(costFor(a.tokenUsage))}</span>` : ''}
+    ${a.guard?.level === 'stop' ? `<br>⛔ <strong>Budget reached</strong> — ${esc(a.guard.reason)}. No more auto-checks${state.limits.action === 'stop' ? ' and the session was stopped' : ''}; raise the limit in Your Inbox → Spend limits to continue.` : a.guard?.level === 'warn' ? `<br>⚠️ ${esc(a.guard.reason)}` : ''}
+    ${a.spinning ? `<br>🔁 <strong>Idle</strong> — several auto-checks in a row found nothing new, so they are backing off (resets as soon as a task, message or answer arrives).` : ''}
     ${a.session === 'live' ? `<br>Auto-check: ${a.autoLoop ? `ON — nudged every ~${a.pollIntervalSeconds}s while idle` : 'OFF'}` : ''}
     ${a.lastUpdated ? `<br>Last update: ${new Date(a.lastUpdated).toLocaleString()}` : ''}`;
 }
@@ -685,6 +686,21 @@ function renderBossDrawer() {
       <button class="btn secondary" onclick="saveProject()">💾 Save</button>
       <div class="err" id="proj-err"></div>
       <div id="proj-ok" style="font-size:12px;color:#2e7d32;margin-top:4px"></div>
+    </section>
+    <section style="margin-top:14px">
+      <h4>Spend limits</h4>
+      <div style="font-size:12px;color:var(--dim);margin-bottom:6px">Blank = no limit. Warns at 80%; at 100% the agent gets no more auto-checks (or is stopped) until you raise the limit. Counts office-launched agents only.</div>
+      <div class="field"><label>Per agent (tokens)</label><input id="lim-agent" type="number" min="0" value="${state.limits.agentTokens || ''}" placeholder="e.g. 2000000"></div>
+      <div class="field"><label>Whole team (tokens)</label><input id="lim-team" type="number" min="0" value="${state.limits.teamTokens || ''}" placeholder="e.g. 8000000"></div>
+      <div class="field"><label>Whole team (≈ USD)</label><input id="lim-cost" type="number" min="0" step="0.5" value="${state.limits.teamCostUsd || ''}" placeholder="e.g. 25"></div>
+      <div class="field"><label>At the limit</label><select id="lim-action">
+        <option value="pause" ${state.limits.action === 'pause' ? 'selected' : ''}>Pause — stop auto-checks, leave the session open</option>
+        <option value="stop" ${state.limits.action === 'stop' ? 'selected' : ''}>Stop — end the session</option>
+      </select></div>
+      <button class="btn secondary" onclick="saveLimits()">💾 Save limits</button>
+      <div class="err" id="lim-err"></div>
+      <div id="lim-ok" style="font-size:12px;color:#2e7d32;margin-top:4px"></div>
+      ${state.guardEvents.length ? `<div style="font-size:11px;color:var(--dim);margin-top:8px">Recent guard events<br>${state.guardEvents.slice().reverse().map(e => `${new Date(e.at).toLocaleTimeString()} · ${esc(e.agent)} · ${esc(e.kind)}${e.detail ? ' — ' + esc(e.detail) : ''}`).join('<br>')}</div>` : ''}
     </section>
     <section style="margin-top:14px">
       <h4>Prefer the file?</h4>
@@ -914,6 +930,22 @@ function checkNotifications() {
       }
     }
   }
+  const levels = new Map(state.agents.map(a => [a.name, a.guard?.level || 'ok']));
+  const spinning = new Set(state.agents.filter(a => a.spinning).map(a => a.name));
+  if (prevGuardLevels && notifyEnabled && 'Notification' in window && Notification.permission === 'granted') {
+    for (const [name, lvl] of levels) {
+      const was = prevGuardLevels.get(name) || 'ok';
+      if (lvl !== was && lvl !== 'ok') {
+        const a = state.agents.find(x => x.name === name);
+        new Notification(lvl === 'stop' ? `⛔ ${name} hit its budget` : `⚠️ ${name} is near its budget`, { body: a?.guard?.reason || '', icon: '/logo.svg' });
+      }
+    }
+    for (const name of spinning) {
+      if (!prevSpinning.has(name)) new Notification(`🔁 ${name} is idle`, { body: 'Several auto-checks found nothing new — nudges are backing off.', icon: '/logo.svg' });
+    }
+  }
+  prevGuardLevels = levels;
+  prevSpinning = spinning;
   prevQuestionIds = questions;
   prevBlocked = blocked;
   prevNeedsPrompt = needsPrompt;
@@ -967,6 +999,22 @@ async function saveProject() {
     });
     await poll(); // header picks up the new name/goal
     const ok = document.getElementById('proj-ok');
+    if (ok) ok.textContent = 'Saved.';
+    if (err) err.textContent = '';
+  } catch (e) { if (err) err.textContent = e.message; }
+}
+
+async function saveLimits() {
+  const err = document.getElementById('lim-err');
+  try {
+    await post('/api/limits', {
+      agentTokens: document.getElementById('lim-agent').value,
+      teamTokens: document.getElementById('lim-team').value,
+      teamCostUsd: document.getElementById('lim-cost').value,
+      action: document.getElementById('lim-action').value,
+    });
+    await poll();
+    const ok = document.getElementById('lim-ok');
     if (ok) ok.textContent = 'Saved.';
     if (err) err.textContent = '';
   } catch (e) { if (err) err.textContent = e.message; }

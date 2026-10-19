@@ -199,3 +199,92 @@ describe('one Office per project', () => {
     await again.exited;
   });
 });
+
+describe('office spend limits', () => {
+  const LPORT = PORT + 10;
+  let ldir, lchild, cookie;
+  const H = () => ({ host: `localhost:${LPORT}`, 'content-type': 'application/json', cookie, origin: `http://localhost:${LPORT}` });
+  const lreq = (opts, body) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: LPORT, ...opts }, (res) => {
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: data }));
+    });
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+  const post = (p, body) => lreq({ path: p, method: 'POST', headers: H() }, JSON.stringify(body));
+  const getState = async () => JSON.parse((await lreq({ path: '/api/state', headers: H() })).body);
+
+  beforeAll(async () => {
+    ldir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-team-limits-'));
+    await fs.ensureDir(path.join(ldir, '.claude-team/tasks'));
+    await fs.ensureDir(path.join(ldir, '.claude-team/logs'));
+    await fs.writeJson(path.join(ldir, '.claude-team/config.json'), minimalConfig());
+    // backend has used 1.5M tokens in earlier office runs
+    await fs.writeJson(path.join(ldir, '.claude-team/logs/token-usage.json'), {
+      agents: { backend: { inputTokens: 1_000_000, outputTokens: 500_000, cacheCreationTokens: 0, cacheReadTokens: 0 } },
+    });
+    lchild = spawn(process.execPath, [bin, 'office', '--port', String(LPORT), '--no-open'], { cwd: ldir });
+    let out = '';
+    const lkey = await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('office did not start: ' + out)), 10000);
+      lchild.stdout.on('data', (d) => { out += d; const m = out.match(/\?key=([0-9a-f]+)/); if (m) { clearTimeout(t); resolve(m[1]); } });
+    });
+    const boot = await lreq({ path: `/?key=${lkey}`, headers: { host: `localhost:${LPORT}` } });
+    cookie = boot.headers['set-cookie'][0].split(';')[0];
+  }, 15000);
+
+  afterAll(async () => {
+    lchild?.kill('SIGINT');
+    await new Promise((r) => lchild?.on('exit', r));
+    await fs.remove(ldir);
+  });
+
+  it('reports no limits and ok levels by default', async () => {
+    const s = await getState();
+    expect(s.limits).toMatchObject({ agentTokens: null, teamTokens: null, teamCostUsd: null, action: 'pause', active: false });
+    expect(s.agents.every((a) => a.guard.level === 'ok')).toBe(true);
+    expect(s.agents.find((a) => a.name === 'backend').tokenUsage.costUsd).toBeCloseTo(1 * 3 + 0.5 * 15);
+  });
+
+  it('validates limits input', async () => {
+    expect((await post('/api/limits', { agentTokens: -1 })).status).toBe(400);
+    expect((await post('/api/limits', { teamCostUsd: 'lots' })).status).toBe(400);
+    expect((await post('/api/limits', { agentTokens: 10, action: 'explode' })).status).toBe(400);
+    expect((await getState()).limits.active).toBe(false);
+  });
+
+  it('flags the over-limit agent, logs it, and refuses to launch it', async () => {
+    expect((await post('/api/limits', { agentTokens: 1_000_000, action: 'pause' })).status).toBe(200);
+    const s = await getState();
+    expect(s.limits).toMatchObject({ agentTokens: 1_000_000, active: true });
+    expect(s.agents.find((a) => a.name === 'backend').guard.level).toBe('stop');
+    expect(s.agents.find((a) => a.name === 'frontend').guard.level).toBe('ok');
+    expect(s.guardEvents.at(-1)).toMatchObject({ agent: 'backend', kind: 'budget-stop' });
+    if (s.canLaunch) {
+      const r = await post('/api/launch', { agent: 'backend' });
+      expect(r.status).toBe(409);
+      expect(JSON.parse(r.body).error).toMatch(/raise the limit/);
+    }
+  });
+
+  it('raising the limit clears the stop and logs it; blank clears the limits', async () => {
+    await post('/api/limits', { agentTokens: 5_000_000, action: 'pause' });
+    let s = await getState();
+    expect(s.agents.find((a) => a.name === 'backend').guard.level).toBe('ok');
+    expect(s.guardEvents.at(-1)).toMatchObject({ agent: 'backend', kind: 'budget-cleared' });
+    await post('/api/limits', { agentTokens: '', teamTokens: '', teamCostUsd: '', action: 'pause' });
+    s = await getState();
+    expect(s.limits.active).toBe(false);
+    expect((await fs.readJson(path.join(ldir, '.claude-team/config.json'))).limits).toBeUndefined();
+  });
+
+  it('a team cost limit flags every agent', async () => {
+    await post('/api/limits', { teamCostUsd: 5 }); // backend alone is $10.50
+    const s = await getState();
+    expect(s.guardTeam.level).toBe('stop');
+    expect(s.agents.every((a) => a.guard.level === 'stop')).toBe(true);
+  });
+});
