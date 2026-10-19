@@ -57,7 +57,7 @@ claude-team office     # 🏢 Visual office view in your browser (live)
 
 (`claude-team` above stands for whichever invocation you're using — `npx /path/to/claude-team`, the alias, or the full `node /path/to/.../bin/claude-team.js`.)
 
-Then open one terminal per agent, run `claude` in each, and paste the prompt `claude-team start` gives you. That's the whole loop.
+Then open one terminal per agent, run `claude --permission-mode dontAsk` in each, and paste the prompt `claude-team start` gives you. That's the whole loop.
 
 ---
 
@@ -368,7 +368,7 @@ Order matters for hierarchies with leadership:
 Each terminal is just:
 
 ```bash
-claude
+claude --permission-mode dontAsk
 # then: "Read CLAUDE.md and .claude-team/agents/<name>.md and start working"
 ```
 
