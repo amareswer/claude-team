@@ -231,3 +231,37 @@ describe('permissions --allow-domain / --remove-domain', () => {
     spy.mockRestore();
   });
 });
+
+import { GITIGNORE_ENTRIES } from '../lib/permissions.js';
+
+describe('.gitignore entries for machine-local files', () => {
+  let dir, prev;
+  beforeEach(async () => { prev = process.cwd(); dir = await fs.mkdtemp(path.join(os.tmpdir(), 'perm-')); process.chdir(dir); });
+  afterEach(async () => { process.chdir(prev); await fs.remove(dir); });
+
+  it('appends missing entries to an existing .gitignore, keeping what is there, once', async () => {
+    await fs.writeFile('.gitignore', 'node_modules\n.claude-team/bin/');
+    expect((await checkProjectPermissions()).missing.join(' ')).toMatch(/npm-cache/);
+    await applyProjectPermissions();
+    const text = await fs.readFile('.gitignore', 'utf8');
+    expect(text.startsWith('node_modules\n.claude-team/bin/\n')).toBe(true);
+    for (const e of GITIGNORE_ENTRIES) expect(text.split('\n').filter((l) => l === e).length).toBe(1);
+    expect((await checkProjectPermissions()).ok).toBe(true);
+    const before = text;
+    expect(await applyProjectPermissions()).toMatchObject({ changed: false });
+    expect(await fs.readFile('.gitignore', 'utf8')).toBe(before);
+  });
+  it('creates .gitignore in a git repo, and counts a leading-slash entry as present', async () => {
+    await fs.ensureDir('.git');
+    await applyProjectPermissions();
+    expect((await fs.readFile('.gitignore', 'utf8')).split('\n')).toEqual(expect.arrayContaining(GITIGNORE_ENTRIES));
+    await fs.remove('.gitignore');
+    await fs.writeFile('.gitignore', GITIGNORE_ENTRIES.map((e) => '/' + e).join('\n') + '\n');
+    expect((await checkProjectPermissions()).ok).toBe(true);
+  });
+  it('leaves projects without git alone', async () => {
+    await applyProjectPermissions();
+    expect(await fs.pathExists('.gitignore')).toBe(false);
+    expect((await checkProjectPermissions()).ok).toBe(true);
+  });
+});

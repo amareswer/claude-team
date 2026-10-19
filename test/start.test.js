@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs-extra';
 import os from 'os';
 import path from 'path';
-import { runStart, LAUNCH_COMMAND } from '../lib/start.js';
+import { runStart, LAUNCH_COMMAND, launchCommandFor } from '../lib/start.js';
 import { saveConfig } from '../lib/config.js';
 import { applyProjectPermissions } from '../lib/permissions.js';
 
@@ -18,10 +18,19 @@ describe('claude-team start', () => {
   });
   afterEach(async () => { vi.restoreAllMocks(); process.chdir(prev); await fs.remove(dir); });
 
-  it('tells every terminal to launch claude in dontAsk mode', async () => {
+  it('tells every terminal to launch claude the way the Office does', async () => {
     await runStart();
-    expect(LAUNCH_COMMAND).toBe('claude --permission-mode dontAsk');
-    expect(out.match(/claude --permission-mode dontAsk/g)).toHaveLength(2); // orchestrator + backend
+    // Once, on a single unboxed line (a box would wrap it and break copy-paste); each terminal's box points at it.
+    const lines = out.replace(/\x1b\[[0-9;]*m/g, '').split('\n');
+    expect(lines.filter((l) => l.trim() === LAUNCH_COMMAND)).toHaveLength(1);
+    expect(out.match(/the launch command above/g)).toHaveLength(2); // orchestrator + backend
+    expect(LAUNCH_COMMAND).toMatch(/claude --permission-mode dontAsk$/);
+  });
+  it('puts the project launcher on PATH and the npm cache in the project, per platform', () => {
+    expect(launchCommandFor('darwin')).toContain('PATH="$PWD/.claude-team/bin:$PATH"');
+    expect(launchCommandFor('darwin')).toContain('npm_config_cache="$PWD/.claude-team/npm-cache"');
+    expect(launchCommandFor('win32')).toContain('.claude-team\\bin;%PATH%');
+    expect(launchCommandFor('win32')).toContain('npm_config_cache=%CD%\\.claude-team\\npm-cache');
   });
   it('warns when confinement is not set up, and stays quiet once it is', async () => {
     await runStart();
