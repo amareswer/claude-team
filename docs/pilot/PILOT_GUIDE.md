@@ -56,7 +56,7 @@ Anything not approved (or edited afterwards) will refuse to run.
 | Step | Do this | You should see |
 |---|---|---|
 | **Assign** | `claude-team office` → open the printed link (it contains a private key) → the **You** desk → add a task with a clear "what done looks like". | Task appears on the board. |
-| | Ask the orchestrator (or edit `.claude-team/tasks/master.json`) to give the task `"acceptanceCriteria": ["…"], "checks": ["unit"]`. *The Office task form can't set these yet — that's a known gap; tell us how annoying it is.* | |
+| | In the same form, fill **Acceptance criteria** (one per line) and tick the **Checks to run before review** that apply (they're listed once you've defined and approved them in step 2). You can also set `"acceptanceCriteria"` / `"checks"` on the task in `.claude-team/tasks/master.json` by hand. | Criteria show under the task card. |
 | **Implement** | Click the agent's desk → **Launch** (or `claude-team start` and use terminals). Watch/steer in the terminal pane. | Agent works; status updates. |
 | **Check** | The orchestrator runs `claude-team check <task-id>` when work is ready (or run it yourself). | ✅/❌ per check, saved with exit code + git revision. Never changes task status. |
 | **Review** | Agent/orchestrator runs `claude-team review request <task-id> -s "what changed"`. Then in the Office click **👀 N to review**, or `claude-team review show <task-id>`. | One page: explanation, criteria, check evidence, diff. |
@@ -76,8 +76,7 @@ Useful any time: `claude-team status`, `claude-team review`, `claude-team resume
 
 - **Approvals and checks are workflow safeguards, not security.** Agents run as you and could edit `.claude-team/` files. The audit trail shows what was recorded, not who really acted.
 - **Platforms:** automated tests pass on macOS, Ubuntu and Windows (Node 20.19/22/24). The *Office UI, agent launch and terminal* have been exercised by hand only on macOS. Linux/Windows interactive use is unverified (Windows has its own smoke-test checklist).
-- **Office task form** has no fields for acceptance criteria/checks (see step 3).
-- **Checks are defined by hand-editing `config.json`**, then approved with the CLI.
+- **Checks can't be defined in the Office.** The task form takes acceptance criteria and lets you tick existing checks, but defining a check is done by editing `config.json`, then approving it with the CLI.
 - **Review diffs** start from where the task was assigned (recorded or inferred from timestamps). If several agents commit to the same checkout, the diff/commit list can include someone else's work. No per-agent git worktrees yet.
 - **Spend limits are opt-in and partial.** Set `limits` in `config.json` (or Your Inbox → Spend limits) to warn at 80% and pause an agent's auto-checks at 100%. They only see office-launched agents, are checked every few seconds (a turn in progress can overshoot), and "$" is an API-equivalent estimate. Idle auto-checks back off automatically. There is no detection of an agent looping *while it is actively working*.
 - **Agents are confined to the project folder** by `.claude/settings.json` (written by `init` and at launch; `claude-team permissions --check` to verify). Not confined on native Windows Bash (no OS sandbox), and sandboxed Bash can still read system paths such as `/etc`. See the README section "Project-folder confinement".
