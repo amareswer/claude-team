@@ -370,6 +370,7 @@ let leavingAgent = null;      // agent mid walk-out — pauses grid re-render
 let prevQuestionIds = null;   // for notifications: unanswered question ids at last poll
 let prevBlocked = null;       // for notifications: blocked/paused agent names at last poll
 let prevNeedsPrompt = null;   // for notifications: agents waiting on a terminal prompt at last poll
+let prevNeedsRelaunch = null; // for notifications: agents that must be relaunched after the trust dialog
 let notifyEnabled = localStorage.getItem('office-notify') === '1';
 
 // API-equivalent $ estimate — priced server-side (lib/guard.js) so the spend
@@ -412,6 +413,7 @@ function deskHtml(agent, idx, arrive) {
       ${agent.currentTaskTitle ? `<div class="tasktag">📌 ${esc(agent.currentTaskTitle)}</div>` : ''}
       ${agent.tokenUsage?.total > 0 ? `<div class="tasktag">🪙 ${formatTokens(agent.tokenUsage.total)}</div>` : ''}
       ${agent.guard?.level === 'stop' ? `<div class="tasktag" style="color:var(--red)" title="${esc(agent.guard.reason)}">⛔ budget reached</div>` : agent.guard?.level === 'warn' ? `<div class="tasktag" title="${esc(agent.guard.reason)}">⚠️ near budget</div>` : ''}
+      ${agent.needsRelaunch ? `<div class="tasktag" style="color:var(--red)" title="Trusted after launch — permissions only apply to a fresh session. Open the drawer and click Relaunch.">↻ relaunch needed</div>` : ''}
       ${agent.spinning ? `<div class="tasktag" title="No new input for several auto-checks — nudges are backing off until something changes">🔁 idle, backing off</div>` : ''}
     </div>
   </div>`;
@@ -546,6 +548,7 @@ function statusHtml(a) {
     ${tokenUsageHtml(a.tokenUsage)}
     ${a.tokenUsage?.total > 0 ? ` <span style="color:var(--dim)" title="API-equivalent estimate; cache writes 1.25×, reads 0.1× input rate">· ≈${formatCost(costFor(a.tokenUsage))}</span>` : ''}
     ${a.guard?.level === 'stop' ? `<br>⛔ <strong>Budget reached</strong> — ${esc(a.guard.reason)}. No more auto-checks${state.limits.action === 'stop' ? ' and the session was stopped' : ''}; raise the limit in Your Inbox → Spend limits to continue.` : a.guard?.level === 'warn' ? `<br>⚠️ ${esc(a.guard.reason)}` : ''}
+    ${a.needsRelaunch ? `<br>↻ <strong>Relaunch needed</strong> — this session started before the folder was trusted, so the project's permissions never applied and every tool call is denied. Click Relaunch below.` : ''}
     ${a.spinning ? `<br>🔁 <strong>Idle</strong> — several auto-checks in a row found nothing new, so they are backing off (resets as soon as a task, message or answer arrives).` : ''}
     ${a.session === 'live' ? `<br>Auto-check: ${a.autoLoop ? `ON — nudged every ~${a.pollIntervalSeconds}s while idle` : 'OFF'}` : ''}
     ${a.lastUpdated ? `<br>Last update: ${new Date(a.lastUpdated).toLocaleString()}` : ''}`;
@@ -582,7 +585,7 @@ function renderAgentDrawer() {
         ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn stop" onclick="stopAgent('${esc(a.name)}')">⏹ Stop session</button>
             <button class="btn secondary" onclick="toggleAutoLoop('${esc(a.name)}', ${!a.autoLoop})">${a.autoLoop ? '⏸ Pause auto-check' : '🔁 Resume auto-check'}</button>
-            ${a.status === 'paused' ? `<button class="btn" onclick="respawnAgent('${esc(a.name)}')">🔄 Respawn</button>` : ''}
+            ${a.status === 'paused' || a.needsRelaunch ? `<button class="btn" onclick="respawnAgent('${esc(a.name)}')">${a.needsRelaunch ? '↻ Relaunch' : '🔄 Respawn'}</button>` : ''}
            </div>`
         : state.canLaunch
           ? `
@@ -909,6 +912,7 @@ function checkNotifications() {
   const questions = new Set(state.openQuestions.filter(q => !q.answered).map(q => q.id));
   const blocked = new Set(state.agents.filter(a => ['blocked', 'paused'].includes(a.status)).map(a => a.name));
   const needsPrompt = new Set(state.agents.filter(a => a.needsHumanPrompt).map(a => a.name));
+  const needsRelaunch = new Set(state.agents.filter(a => a.needsRelaunch).map(a => a.name));
   const firstPoll = prevQuestionIds === null;
 
   if (!firstPoll && notifyEnabled && 'Notification' in window && Notification.permission === 'granted') {
@@ -923,6 +927,9 @@ function checkNotifications() {
         const a = state.agents.find(x => x.name === name);
         new Notification(`🚧 ${name} is ${a?.status}`, { body: a?.blockedReason || (a?.status === 'paused' ? 'Token limit hit — respawn from the drawer' : 'Needs attention'), icon: '/logo.svg' });
       }
+    }
+    for (const name of needsRelaunch) {
+      if (!prevNeedsRelaunch.has(name)) new Notification(`↻ ${name} needs a relaunch`, { body: 'The folder was trusted after it launched, so its permissions never applied. Open the drawer and relaunch it.', icon: '/logo.svg' });
     }
     for (const name of needsPrompt) {
       if (!prevNeedsPrompt.has(name)) {
@@ -949,6 +956,7 @@ function checkNotifications() {
   prevQuestionIds = questions;
   prevBlocked = blocked;
   prevNeedsPrompt = needsPrompt;
+  prevNeedsRelaunch = needsRelaunch;
 }
 
 // ── Actions ────────────────────────────────────────────

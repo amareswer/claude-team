@@ -98,6 +98,25 @@ describe('applyProjectPermissions / checkProjectPermissions', () => {
   });
 });
 
+import { looksLikeTrustPrompt, trustPromptState } from '../lib/office.js';
+
+describe('looksLikeTrustPrompt', () => {
+  const tui = (s) => s.split(' ').map((w) => `\x1b[1C${w}`).join('\x1b[1C');
+  it('matches the trust-folder dialog', () => {
+    expect(looksLikeTrustPrompt(tui('Quick safety check: Is this a project you trust? ❯ 1. Yes, I trust this folder 2. No, exit'))).toBe(true);
+  });
+  it('reports "answered" once enough output has flowed past the dialog', () => {
+    const dialog = tui('Is this a project you trust? 1. Yes, I trust this folder 2. No, exit');
+    expect(trustPromptState(dialog)).toBe('showing');
+    expect(trustPromptState(dialog + tui('Welcome back. Reading CLAUDE.md and the project docs to get started on the first task now.'.repeat(4)))).toBe('answered');
+    expect(trustPromptState(tui('nothing here'))).toBe('none');
+  });
+  it('ignores ordinary output and other modals', () => {
+    expect(looksLikeTrustPrompt(tui('Reading CLAUDE.md esc to interrupt'))).toBe(false);
+    expect(looksLikeTrustPrompt(tui('Set it up Enter to confirm Esc to cancel'))).toBe(false);
+  });
+});
+
 describe('looksLikeBlockingPrompt', () => {
   const tui = (s) => s.split(' ').map((w) => `\x1b[1C${w}`).join('\x1b[1C'); // cursor jumps instead of spaces
   it('still catches the "Enter to confirm" modals', () => {
