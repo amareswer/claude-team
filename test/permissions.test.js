@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs-extra';
 import os from 'os';
 import path from 'path';
-import { PROJECT_POLICY, mergeSettings, applyProjectPermissions, checkProjectPermissions } from '../lib/permissions.js';
+import { policyFor, mergeSettings, applyProjectPermissions, checkProjectPermissions } from '../lib/permissions.js';
 import { looksLikeBlockingPrompt } from '../lib/office.js';
 
 describe('mergeSettings', () => {
@@ -18,7 +18,7 @@ describe('mergeSettings', () => {
     const existing = { model: 'opus', permissions: { allow: ['Bash(npm test)', 'Edit(./**)'], deny: ['Read(./.env)'] }, sandbox: { network: { allowedDomains: ['example.com'] } } };
     const s = mergeSettings(existing);
     expect(s.model).toBe('opus');
-    expect(s.permissions.allow).toEqual(['Bash(npm test)', 'Edit(./**)']);
+    expect(s.permissions.allow).toEqual(['Bash(npm test)', 'Edit(./**)', 'Bash']);
     expect(s.permissions.deny[0]).toBe('Read(./.env)');
     expect(s.permissions.deny.filter((r) => r === 'Edit(./.claude/**)')).toHaveLength(1);
     expect(s.sandbox.network.allowedDomains).toEqual(['example.com']);
@@ -32,7 +32,30 @@ describe('mergeSettings', () => {
   });
   it('drops an allow rule that would reopen what the policy denies', () => {
     const s = mergeSettings({ permissions: { allow: ['Edit(./.claude/**)', 'Edit(./.claude-team/config.json)', 'Edit(./src/**)'] } });
-    expect(s.permissions.allow).toEqual(['Edit(./src/**)', 'Edit(./**)']);
+    expect(s.permissions.allow).toEqual(['Edit(./src/**)', 'Edit(./**)', 'Bash']);
+  });
+  it('allows Bash outright where the OS sandbox exists, and refuses to run unsandboxed', () => {
+    for (const platform of ['darwin', 'linux']) {
+      const s = mergeSettings(null, platform);
+      expect(s.permissions.allow).toContain('Bash');
+      expect(s.sandbox.failIfUnavailable).toBe(true);
+    }
+  });
+  it('on native Windows (no sandbox) never allows bare Bash — only a short git/test allowlist', () => {
+    const s = mergeSettings(null, 'win32');
+    expect(s.permissions.allow).not.toContain('Bash');
+    expect(s.permissions.allow).toEqual(expect.arrayContaining(['Bash(git commit*)', 'Bash(npm test*)']));
+    expect(s.sandbox.failIfUnavailable).toBeUndefined();
+  });
+  it('a settings file committed from the other platform is corrected, not trusted', () => {
+    const fromMac = mergeSettings(null, 'darwin');
+    const onWindows = mergeSettings(fromMac, 'win32');
+    expect(onWindows.permissions.allow).not.toContain('Bash');
+    expect(onWindows.sandbox.failIfUnavailable).toBeUndefined();
+    const backOnMac = mergeSettings(onWindows, 'darwin');
+    expect(backOnMac.permissions.allow).toContain('Bash');
+    expect(backOnMac.permissions.allow).not.toContain('Bash(git commit*)');
+    expect(mergeSettings(backOnMac, 'darwin')).toEqual(backOnMac);
   });
   it('does not mutate its input', () => {
     const existing = { permissions: { allow: ['A'] } };
@@ -71,6 +94,7 @@ describe('applyProjectPermissions / checkProjectPermissions', () => {
     const r = await checkProjectPermissions();
     expect(r.ok).toBe(false);
     expect(r.missing.join(' ')).toMatch(/sandbox/);
+    expect((await checkProjectPermissions('win32')).missing.join(' ')).not.toMatch(/failIfUnavailable|allow Bash$/);
   });
 });
 
@@ -84,5 +108,59 @@ describe('looksLikeBlockingPrompt', () => {
   });
   it('ignores normal working output', () => {
     expect(looksLikeBlockingPrompt(tui('Reading CLAUDE.md esc to interrupt'))).toBe(false);
+  });
+});
+
+import { cliAccessFor } from '../lib/permissions.js';
+
+describe('cliAccessFor (agents must be able to run the claude-team CLI from inside the sandbox)', () => {
+  const base = { root: '/Users/me/tools/claude-team', execPath: '/opt/homebrew/bin/node', home: '/Users/me' };
+  it('writes a POSIX launcher that runs this install, and grants read of that folder', () => {
+    const a = cliAccessFor({ ...base, platform: 'darwin' });
+    expect(a.wrapper.name).toBe('claude-team');
+    expect(a.wrapper.content).toContain('exec "/opt/homebrew/bin/node" "/Users/me/tools/claude-team/bin/claude-team.js" "$@"');
+    expect(a.allowRead).toEqual(['/Users/me/tools/claude-team']);
+  });
+  it("also grants the node install when it lives under the home folder (nvm etc.), which the sandbox otherwise hides", () => {
+    const a = cliAccessFor({ ...base, platform: 'linux', execPath: '/Users/me/.nvm/versions/node/v22.1.0/bin/node' });
+    expect(a.allowRead).toEqual(['/Users/me/tools/claude-team', '/Users/me/.nvm/versions/node/v22.1.0']);
+  });
+  it('on native Windows uses a .cmd launcher and needs no read grant (no sandbox)', () => {
+    const a = cliAccessFor({ root: 'C:\\tools\\claude-team', execPath: 'C:\\node\\node.exe', home: 'C:\\Users\\me', platform: 'win32' });
+    expect(a.wrapper.name).toBe('claude-team.cmd');
+    expect(a.wrapper.content).toContain('"C:\\node\\node.exe" "C:\\tools\\claude-team\\bin\\claude-team.js" %*');
+    expect(a.allowRead).toEqual([]);
+  });
+});
+
+describe('applyProjectPermissions — CLI access', () => {
+  let dir, prev;
+  beforeEach(async () => { prev = process.cwd(); dir = await fs.mkdtemp(path.join(os.tmpdir(), 'perm-')); process.chdir(dir); });
+  afterEach(async () => { process.chdir(prev); await fs.remove(dir); });
+
+  it('creates an executable launcher in .claude-team/bin and a machine-local read grant, and is idempotent', async () => {
+    await applyProjectPermissions();
+    const wrapper = '.claude-team/bin/' + (process.platform === 'win32' ? 'claude-team.cmd' : 'claude-team');
+    expect(await fs.pathExists(wrapper)).toBe(true);
+    if (process.platform !== 'win32') expect((await fs.stat(wrapper)).mode & 0o111).not.toBe(0);
+    const local = await fs.readJson('.claude/settings.local.json');
+    if (process.platform !== 'win32') expect(local.sandbox.filesystem.allowRead.length).toBeGreaterThan(0);
+    const before = await fs.readFile('.claude/settings.local.json', 'utf8');
+    expect(await applyProjectPermissions()).toMatchObject({ changed: false });
+    expect(await fs.readFile('.claude/settings.local.json', 'utf8')).toBe(before);
+  });
+  it('keeps the user\'s own settings.local.json keys and read grants', async () => {
+    await fs.outputJson('.claude/settings.local.json', { env: { X: '1' }, sandbox: { filesystem: { allowRead: ['/my/own/dir'] } } });
+    await applyProjectPermissions();
+    const local = await fs.readJson('.claude/settings.local.json');
+    expect(local.env).toEqual({ X: '1' });
+    if (process.platform !== 'win32') expect(local.sandbox.filesystem.allowRead).toContain('/my/own/dir');
+  });
+  it('check reports a missing launcher', async () => {
+    await applyProjectPermissions();
+    await fs.remove('.claude-team/bin');
+    const r = await checkProjectPermissions();
+    expect(r.ok).toBe(false);
+    expect(r.missing.join(' ')).toMatch(/launcher/);
   });
 });
