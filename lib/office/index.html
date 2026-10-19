@@ -370,6 +370,7 @@ let leavingAgent = null;      // agent mid walk-out — pauses grid re-render
 let prevQuestionIds = null;   // for notifications: unanswered question ids at last poll
 let prevBlocked = null;       // for notifications: blocked/paused agent names at last poll
 let prevNeedsPrompt = null;   // for notifications: agents waiting on a terminal prompt at last poll
+let prevDenied = null;        // for notifications: denied tool-call counts per agent at last poll
 let prevNeedsRelaunch = null; // for notifications: agents that must be relaunched after the trust dialog
 let notifyEnabled = localStorage.getItem('office-notify') === '1';
 
@@ -413,6 +414,7 @@ function deskHtml(agent, idx, arrive) {
       ${agent.currentTaskTitle ? `<div class="tasktag">📌 ${esc(agent.currentTaskTitle)}</div>` : ''}
       ${agent.tokenUsage?.total > 0 ? `<div class="tasktag">🪙 ${formatTokens(agent.tokenUsage.total)}</div>` : ''}
       ${agent.guard?.level === 'stop' ? `<div class="tasktag" style="color:var(--red)" title="${esc(agent.guard.reason)}">⛔ budget reached</div>` : agent.guard?.level === 'warn' ? `<div class="tasktag" title="${esc(agent.guard.reason)}">⚠️ near budget</div>` : ''}
+      ${agent.denials?.count ? `<div class="tasktag" style="color:var(--red)" title="Claude Code refused ${agent.denials.count} tool call(s) from this agent — open the drawer to see which">🚫 ${agent.denials.count} denied</div>` : ''}
       ${agent.needsRelaunch ? `<div class="tasktag" style="color:var(--red)" title="Trusted after launch — permissions only apply to a fresh session. Open the drawer and click Relaunch.">↻ relaunch needed</div>` : ''}
       ${agent.spinning ? `<div class="tasktag" title="No new input for several auto-checks — nudges are backing off until something changes">🔁 idle, backing off</div>` : ''}
     </div>
@@ -548,6 +550,7 @@ function statusHtml(a) {
     ${tokenUsageHtml(a.tokenUsage)}
     ${a.tokenUsage?.total > 0 ? ` <span style="color:var(--dim)" title="API-equivalent estimate; cache writes 1.25×, reads 0.1× input rate">· ≈${formatCost(costFor(a.tokenUsage))}</span>` : ''}
     ${a.guard?.level === 'stop' ? `<br>⛔ <strong>Budget reached</strong> — ${esc(a.guard.reason)}. No more auto-checks${state.limits.action === 'stop' ? ' and the session was stopped' : ''}; raise the limit in Your Inbox → Spend limits to continue.` : a.guard?.level === 'warn' ? `<br>⚠️ ${esc(a.guard.reason)}` : ''}
+    ${a.denials?.count ? `<br>🚫 <strong>${a.denials.count} tool call${a.denials.count === 1 ? '' : 's'} denied</strong> — the project's permissions refused these (most recent last):<ul style="margin:4px 0 0 18px;padding:0">${a.denials.recent.slice(-5).map(d => `<li><code>${esc(d.tool)}</code> ${esc(d.detail)}</li>`).join('')}</ul>` : ''}
     ${a.needsRelaunch ? `<br>↻ <strong>Relaunch needed</strong> — this session started before the folder was trusted, so the project's permissions never applied and every tool call is denied. Click Relaunch below.` : ''}
     ${a.spinning ? `<br>🔁 <strong>Idle</strong> — several auto-checks in a row found nothing new, so they are backing off (resets as soon as a task, message or answer arrives).` : ''}
     ${a.session === 'live' ? `<br>Auto-check: ${a.autoLoop ? `ON — nudged every ~${a.pollIntervalSeconds}s while idle` : 'OFF'}` : ''}
@@ -912,6 +915,7 @@ function checkNotifications() {
   const questions = new Set(state.openQuestions.filter(q => !q.answered).map(q => q.id));
   const blocked = new Set(state.agents.filter(a => ['blocked', 'paused'].includes(a.status)).map(a => a.name));
   const needsPrompt = new Set(state.agents.filter(a => a.needsHumanPrompt).map(a => a.name));
+  const denied = new Map(state.agents.map(a => [a.name, a.denials?.count || 0]));
   const needsRelaunch = new Set(state.agents.filter(a => a.needsRelaunch).map(a => a.name));
   const firstPoll = prevQuestionIds === null;
 
@@ -926,6 +930,12 @@ function checkNotifications() {
       if (!prevBlocked.has(name)) {
         const a = state.agents.find(x => x.name === name);
         new Notification(`🚧 ${name} is ${a?.status}`, { body: a?.blockedReason || (a?.status === 'paused' ? 'Token limit hit — respawn from the drawer' : 'Needs attention'), icon: '/logo.svg' });
+      }
+    }
+    for (const [name, n] of denied) {
+      if (prevDenied && n > (prevDenied.get(name) || 0)) {
+        const last = state.agents.find(x => x.name === name)?.denials?.recent.slice(-1)[0];
+        new Notification(`🚫 ${name}: a tool call was denied`, { body: last ? `${last.tool}: ${last.detail}` : 'Open the drawer to see it.', icon: '/logo.svg' });
       }
     }
     for (const name of needsRelaunch) {
@@ -957,6 +967,7 @@ function checkNotifications() {
   prevBlocked = blocked;
   prevNeedsPrompt = needsPrompt;
   prevNeedsRelaunch = needsRelaunch;
+  prevDenied = denied;
 }
 
 // ── Actions ────────────────────────────────────────────
