@@ -370,6 +370,8 @@ let leavingAgent = null;      // agent mid walk-out — pauses grid re-render
 let prevQuestionIds = null;   // for notifications: unanswered question ids at last poll
 let prevBlocked = null;       // for notifications: blocked/paused agent names at last poll
 let prevNeedsPrompt = null;   // for notifications: agents waiting on a terminal prompt at last poll
+let prevBurning = new Set();   // for notifications: agents over the burn alert at last poll
+let prevRepeating = new Set(); // for notifications: agents repeating a tool call at last poll
 let prevDenied = null;        // for notifications: denied tool-call counts per agent at last poll
 let prevNeedsRelaunch = null; // for notifications: agents that must be relaunched after the trust dialog
 let notifyEnabled = localStorage.getItem('office-notify') === '1';
@@ -414,6 +416,8 @@ function deskHtml(agent, idx, arrive) {
       ${agent.currentTaskTitle ? `<div class="tasktag">📌 ${esc(agent.currentTaskTitle)}</div>` : ''}
       ${agent.tokenUsage?.total > 0 ? `<div class="tasktag">🪙 ${formatTokens(agent.tokenUsage.total)}</div>` : ''}
       ${agent.guard?.level === 'stop' ? `<div class="tasktag" style="color:var(--red)" title="${esc(agent.guard.reason)}">⛔ budget reached</div>` : agent.guard?.level === 'warn' ? `<div class="tasktag" title="${esc(agent.guard.reason)}">⚠️ near budget</div>` : ''}
+      ${agent.burning ? `<div class="tasktag" style="color:var(--red)" title="Spending about $${agent.burning.usdPerHour.toFixed(2)}/hour, over your burn alert">🔥 burning fast</div>` : ''}
+      ${agent.repeating ? `<div class="tasktag" style="color:var(--red)" title="${esc(agent.repeating.tool)} called with the same input ${agent.repeating.count} times in a row: ${esc(agent.repeating.detail)}">🔄 repeating</div>` : ''}
       ${agent.denials?.count ? `<div class="tasktag" style="color:var(--red)" title="Claude Code refused ${agent.denials.count} tool call(s) from this agent — open the drawer to see which">🚫 ${agent.denials.count} denied</div>` : ''}
       ${agent.needsRelaunch ? `<div class="tasktag" style="color:var(--red)" title="Trusted after launch — permissions only apply to a fresh session. Open the drawer and click Relaunch.">↻ relaunch needed</div>` : ''}
       ${agent.spinning ? `<div class="tasktag" title="No new input for several auto-checks — nudges are backing off until something changes">🔁 idle, backing off</div>` : ''}
@@ -550,6 +554,8 @@ function statusHtml(a) {
     ${tokenUsageHtml(a.tokenUsage)}
     ${a.tokenUsage?.total > 0 ? ` <span style="color:var(--dim)" title="API-equivalent estimate; cache writes 1.25×, reads 0.1× input rate">· ≈${formatCost(costFor(a.tokenUsage))}</span>` : ''}
     ${a.guard?.level === 'stop' ? `<br>⛔ <strong>Budget reached</strong> — ${esc(a.guard.reason)}. No more auto-checks${state.limits.action === 'stop' ? ' and the session was stopped' : ''}; raise the limit in Your Inbox → Spend limits to continue.` : a.guard?.level === 'warn' ? `<br>⚠️ ${esc(a.guard.reason)}` : ''}
+    ${a.burning ? `<br>🔥 <strong>Burning fast</strong> — about $${a.burning.usdPerHour.toFixed(2)}/hour over the last few minutes, above your burn alert. Check what it is doing; this is a warning only.` : ''}
+    ${a.repeating ? `<br>🔄 <strong>Repeating itself</strong> — <code>${esc(a.repeating.tool)}</code> with the same input ${a.repeating.count} times in a row: ${esc(a.repeating.detail)}. It may be stuck; consider stopping it or giving it new direction.` : ''}
     ${a.denials?.count ? `<br>🚫 <strong>${a.denials.count} tool call${a.denials.count === 1 ? '' : 's'} denied</strong> — the project's permissions refused these (most recent last):<ul style="margin:4px 0 0 18px;padding:0">${a.denials.recent.slice(-5).map(d => `<li><code>${esc(d.tool)}</code> ${esc(d.detail)}</li>`).join('')}</ul>` : ''}
     ${a.needsRelaunch ? `<br>↻ <strong>Relaunch needed</strong> — this session started before the folder was trusted, so the project's permissions never applied and every tool call is denied. Click Relaunch below.` : ''}
     ${a.spinning ? `<br>🔁 <strong>Idle</strong> — several auto-checks in a row found nothing new, so they are backing off (resets as soon as a task, message or answer arrives).` : ''}
@@ -699,6 +705,7 @@ function renderBossDrawer() {
       <div class="field"><label>Per agent (tokens)</label><input id="lim-agent" type="number" min="0" value="${state.limits.agentTokens || ''}" placeholder="e.g. 2000000"></div>
       <div class="field"><label>Whole team (tokens)</label><input id="lim-team" type="number" min="0" value="${state.limits.teamTokens || ''}" placeholder="e.g. 8000000"></div>
       <div class="field"><label>Whole team (≈ USD)</label><input id="lim-cost" type="number" min="0" step="0.5" value="${state.limits.teamCostUsd || ''}" placeholder="e.g. 25"></div>
+      <div class="field"><label>Burn alert (≈ USD/hour, per agent — warns only)</label><input id="lim-burn" type="number" min="0" step="0.5" value="${state.limits.burnUsdPerHour || ''}" placeholder="e.g. 15"></div>
       <div class="field"><label>At the limit</label><select id="lim-action">
         <option value="pause" ${state.limits.action === 'pause' ? 'selected' : ''}>Pause — stop auto-checks, leave the session open</option>
         <option value="stop" ${state.limits.action === 'stop' ? 'selected' : ''}>Stop — end the session</option>
@@ -915,6 +922,8 @@ function checkNotifications() {
   const questions = new Set(state.openQuestions.filter(q => !q.answered).map(q => q.id));
   const blocked = new Set(state.agents.filter(a => ['blocked', 'paused'].includes(a.status)).map(a => a.name));
   const needsPrompt = new Set(state.agents.filter(a => a.needsHumanPrompt).map(a => a.name));
+  const burning = new Set(state.agents.filter(a => a.burning).map(a => a.name));
+  const repeating = new Set(state.agents.filter(a => a.repeating).map(a => a.name));
   const denied = new Map(state.agents.map(a => [a.name, a.denials?.count || 0]));
   const needsRelaunch = new Set(state.agents.filter(a => a.needsRelaunch).map(a => a.name));
   const firstPoll = prevQuestionIds === null;
@@ -932,6 +941,8 @@ function checkNotifications() {
         new Notification(`🚧 ${name} is ${a?.status}`, { body: a?.blockedReason || (a?.status === 'paused' ? 'Token limit hit — respawn from the drawer' : 'Needs attention'), icon: '/logo.svg' });
       }
     }
+    for (const name of burning) if (!prevBurning.has(name)) new Notification(`🔥 ${name} is burning fast`, { body: 'Spending above your burn alert — check what it is doing.', icon: '/logo.svg' });
+    for (const name of repeating) if (!prevRepeating.has(name)) new Notification(`🔄 ${name} is repeating itself`, { body: state.agents.find(x => x.name === name)?.repeating.detail || '', icon: '/logo.svg' });
     for (const [name, n] of denied) {
       if (prevDenied && n > (prevDenied.get(name) || 0)) {
         const last = state.agents.find(x => x.name === name)?.denials?.recent.slice(-1)[0];
@@ -968,6 +979,8 @@ function checkNotifications() {
   prevNeedsPrompt = needsPrompt;
   prevNeedsRelaunch = needsRelaunch;
   prevDenied = denied;
+  prevBurning = burning;
+  prevRepeating = repeating;
 }
 
 // ── Actions ────────────────────────────────────────────
@@ -1030,6 +1043,7 @@ async function saveLimits() {
       agentTokens: document.getElementById('lim-agent').value,
       teamTokens: document.getElementById('lim-team').value,
       teamCostUsd: document.getElementById('lim-cost').value,
+      burnUsdPerHour: document.getElementById('lim-burn').value,
       action: document.getElementById('lim-action').value,
     });
     await poll();

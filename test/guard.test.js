@@ -31,7 +31,7 @@ describe('normalizeLimits', () => {
     expect(normalizeLimits({ agentTokens: 0, teamTokens: -5, teamCostUsd: 'abc' })).toBeNull();
   });
   it('keeps positive numbers and defaults the action to pause', () => {
-    expect(normalizeLimits({ agentTokens: 1000, teamCostUsd: 5 })).toEqual({ agentTokens: 1000, teamTokens: null, teamCostUsd: 5, action: 'pause' });
+    expect(normalizeLimits({ agentTokens: 1000, teamCostUsd: 5 })).toEqual({ agentTokens: 1000, teamTokens: null, teamCostUsd: 5, action: 'pause', burnUsdPerHour: null });
   });
   it('only accepts pause|stop for the action', () => {
     expect(normalizeLimits({ teamTokens: 10, action: 'stop' }).action).toBe('stop');
@@ -177,5 +177,59 @@ describe('guard log', () => {
     await fs.ensureDir('.claude-team/logs');
     await fs.writeFile('.claude-team/logs/guard.log', '{"kind":"ok"}\nnot json\n');
     expect(await readGuardEvents(5)).toHaveLength(1);
+  });
+});
+
+import { newBurn, observeBurn, burnRatePerHour, newRepeat, observeToolCall, isRepeating, REPEAT_THRESHOLD } from '../lib/guard.js';
+
+describe('burn rate', () => {
+  const MIN = 60_000;
+  it('is null until there are two samples at least 2 minutes apart', () => {
+    const b = newBurn();
+    expect(burnRatePerHour(b)).toBeNull();
+    observeBurn(b, 0, 0);
+    observeBurn(b, 1 * MIN, 5);
+    expect(burnRatePerHour(b)).toBeNull();
+  });
+  it('is $/hour over the samples in the window', () => {
+    const b = newBurn();
+    observeBurn(b, 0, 0);
+    observeBurn(b, 6 * MIN, 1); // $1 in 6 minutes = $10/h
+    expect(burnRatePerHour(b)).toBeCloseTo(10);
+  });
+  it('forgets samples older than 10 minutes, so a past spike fades', () => {
+    const b = newBurn();
+    observeBurn(b, 0, 0);
+    observeBurn(b, 5 * MIN, 5);
+    observeBurn(b, 20 * MIN, 5.1);
+    observeBurn(b, 25 * MIN, 5.2);
+    expect(burnRatePerHour(b)).toBeLessThan(2);
+  });
+  it('a burn limit alone turns the guard on', () => {
+    expect(normalizeLimits({ burnUsdPerHour: 12 })).toMatchObject({ burnUsdPerHour: 12, agentTokens: null });
+    expect(normalizeLimits({ burnUsdPerHour: 0 })).toBeNull();
+  });
+});
+
+describe('repeated tool calls', () => {
+  it('fires once when the same call is made REPEAT_THRESHOLD times in a row', () => {
+    const r = newRepeat();
+    const fired = [];
+    for (let i = 0; i < REPEAT_THRESHOLD + 2; i++) fired.push(observeToolCall(r, 'Bash', { command: 'npm test' }, 'npm test'));
+    expect(fired.filter(Boolean)).toHaveLength(1);
+    expect(fired[REPEAT_THRESHOLD - 1]).toBe(true);
+    expect(isRepeating(r)).toBe(true);
+  });
+  it('a different call, or different input, resets the run', () => {
+    const r = newRepeat();
+    for (let i = 0; i < 3; i++) observeToolCall(r, 'Read', { file_path: 'a' });
+    observeToolCall(r, 'Read', { file_path: 'b' });
+    expect(isRepeating(r)).toBe(false);
+    expect(r.count).toBe(1);
+  });
+  it('keeps the tool and detail of the repeated call', () => {
+    const r = newRepeat();
+    for (let i = 0; i < 4; i++) observeToolCall(r, 'Bash', { command: 'x' }, 'x');
+    expect(r).toMatchObject({ tool: 'Bash', detail: 'x', count: 4 });
   });
 });
