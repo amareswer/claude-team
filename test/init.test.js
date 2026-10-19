@@ -77,6 +77,10 @@ describe('runInit — cost/scale warning gate', () => {
       // simple hierarchy → 0 leadership + 2 workers, orchestrator implicit
       expect(config.agents).toHaveLength(2);
       expect(await fs.pathExists('CLAUDE.md')).toBe(true);
+      // agents are confined to the project by the project's own settings
+      const settings = await fs.readJson('.claude/settings.json');
+      expect(settings.permissions.blockReadsOutsideWorkingDirectories).toBe(true);
+      expect(settings.sandbox.enabled).toBe(true);
     });
   });
 

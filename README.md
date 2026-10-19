@@ -409,6 +409,16 @@ One local clone of claude-team works against any number of projects — run it (
 
 ---
 
+## Project-folder confinement
+
+`claude-team init` (and every Office launch) makes sure the project's own `.claude/settings.json` carries this policy, so agents work inside the project folder only — nothing depends on your global Claude Code settings. Run `claude-team permissions` to apply it to an existing project, or `claude-team permissions --check` to see what's missing. Your other settings and rules in that file are kept; commit it with the project.
+
+- **`dontAsk` mode** — only pre-approved actions run; everything else is denied on the spot. Agents never sit waiting on a permission prompt, and auto mode's classifier never gets to approve something outside the project. Office launches also pass `--permission-mode dontAsk`.
+- **File tools** — edits are allowed inside the project only; reads outside it are blocked (`blockReadsOutsideWorkingDirectories`).
+- **Bash** runs in Claude Code's OS sandbox with writes confined to the project and no unsandboxed escape hatch. Verified with a real Haiku agent: writes inside the project succeed; writes outside (file tool and Bash) and reads of `~/.zshrc` are refused.
+- **Agents can't edit** `.claude/` (this policy) or `.claude-team/config.json` (spend limits, check definitions and approvals). Deny rules beat allow rules in every settings scope, so a looser global setting can't reopen them.
+- **Caveats:** the Bash sandbox needs macOS, Linux or WSL2 — on native Windows Bash is not sandboxed, so only the file-tool rules apply and Bash commands outside the allowlist are denied rather than prompted. Sandboxed Bash can still *read* files outside the project (only writes are confined), and new network hosts are denied rather than prompted, so e.g. `npm install` may need a `sandbox.network` allowlist in that file. Your own deny rules and `allow` rules for specific commands (e.g. `Bash(npm test)`) are yours to add.
+
 ## Pros, Cons & Limitations
 
 ### Pros
