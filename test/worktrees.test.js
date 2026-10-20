@@ -153,6 +153,31 @@ describe('review from a worktree', () => {
   });
 });
 
+describe('review requested from the main folder (the orchestrator\'s usual way)', () => {
+  it('looks at the assignee\'s worktree, not the main checkout', async () => {
+    await withTempCwd(async () => {
+      const root = await repo();
+      const config = minimalConfig();
+      const a = await ensureWorktree('adder', root);
+      git(a, 'switch', '-q', '-c', 'adder/task-a', 'main');
+      await fs.writeFile(path.join(a, 'add.js'), 'add\n'); git(a, 'add', '-A'); git(a, 'commit', '-q', '-m', 'add');
+      delete process.env.CLAUDE_TEAM_WORKDIR;
+      await requestReview(config, 'task-a', { baseRevision: 'main' }); // cwd is the main folder
+      expect((await fs.readJson('.claude-team/tasks/master.json')).tasks.find((t) => t.id === 'task-a').workingDir).toBe('.claude-worktrees/adder');
+      const d = await reviewDetail(config, 'task-a');
+      expect(d.diff.commits).toHaveLength(1);
+      expect(d.diff.stat).toMatch(/add\.js/);
+    });
+  });
+  it('leaves the task alone when the assignee has no worktree', async () => {
+    await withTempCwd(async () => {
+      await repo();
+      await requestReview(minimalConfig(), 'task-b', { baseRevision: 'main' });
+      expect((await fs.readJson('.claude-team/tasks/master.json')).tasks.find((t) => t.id === 'task-b').workingDir).toBeUndefined();
+    });
+  });
+});
+
 describe('applyWorktreePermissions', () => {
   it('writes the shared-files grants into the worktree settings.local.json, idempotently, keeping user keys', async () => {
     await withTempCwd(async () => {
