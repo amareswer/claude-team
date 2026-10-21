@@ -127,6 +127,20 @@ describe('enterProjectRoot', () => {
   });
 });
 
+describe('enterProjectRoot from inside .claude-team', () => {
+  it('moves up to the project, so claude-team still finds its config after an agent cd-s into the team folder', async () => {
+    await withTempCwd(async () => {
+      const root = await repo();
+      const prev = process.cwd();
+      try {
+        process.chdir(path.join(root, '.claude-team', 'tasks'));
+        expect(enterProjectRoot()).toBeNull();
+        expect(await fs.realpath(process.cwd())).toBe(root);
+      } finally { process.chdir(prev); }
+    });
+  });
+});
+
 describe('review from a worktree', () => {
   afterEach(() => { delete process.env.CLAUDE_TEAM_WORKDIR; });
   it('records where the work is and shows only that agent\'s commit, even with a sibling committing in parallel', async () => {
