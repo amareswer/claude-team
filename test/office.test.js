@@ -150,6 +150,7 @@ describe('office task form: criteria and checks', () => {
   beforeAll(async () => {
     const config = await fs.readJson(path.join(dir, '.claude-team/config.json'));
     config.checks = { unit: { command: 'node -e "process.exit(0)"' } };
+    config.agents.push({ name: 'project-manager', role: 'Project Manager', responsibilities: ['Plan'], isLeadership: true, model: 'opus' });
     await fs.writeJson(path.join(dir, '.claude-team/config.json'), config);
     const boot = await request({ path: `/?key=${key}`, headers: { host: `localhost:${PORT}` } });
     cookie = boot.headers['set-cookie'][0].split(';')[0];
@@ -168,6 +169,23 @@ describe('office task form: criteria and checks', () => {
     const id = JSON.parse(ok.body).id;
     const master = await fs.readJson(path.join(dir, '.claude-team/tasks/master.json'));
     expect(master.tasks.find((t) => t.id === id)).toMatchObject({ acceptanceCriteria: ['works'], checks: ['unit'] });
+  });
+
+  it('planner guard: refuses hands-on work for the project manager unless overridden', async () => {
+    const coding = { title: 'Data test', description: 'Write the script and a short report.', assignTo: 'project-manager' };
+    const refused = await post('/api/task', coding);
+    expect(refused.status).toBe(400);
+    expect(JSON.parse(refused.body).error).toMatch(/does not do hands-on work/);
+    expect((await post('/api/task', { ...coding, assignTo: 'orchestrator' })).status).toBe(200);
+    expect((await post('/api/task', { ...coding, allowPlannerWork: true })).status).toBe(200);
+    expect((await post('/api/task', { title: 'Plan v1 (no coding)', description: 'Do not write code. Break the goal into tasks.', assignTo: 'project-manager' })).status).toBe(200);
+  });
+
+  it('planner guard: refuses reassigning a coding task to the project manager', async () => {
+    const made = JSON.parse((await post('/api/task', { title: 'Build the parser', description: 'Implement it.' })).body);
+    const refused = await post('/api/taskupdate', { id: made.id, assignTo: 'project-manager' });
+    expect(refused.status).toBe(400);
+    expect((await post('/api/taskupdate', { id: made.id, assignTo: 'project-manager', allowPlannerWork: true })).status).toBe(200);
   });
 });
 

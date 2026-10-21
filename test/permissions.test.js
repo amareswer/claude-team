@@ -16,13 +16,13 @@ describe('mergeSettings', () => {
   });
   it('keeps unrelated user keys and rules, adds ours, never duplicates', () => {
     const existing = { model: 'opus', permissions: { allow: ['Bash(npm test)', 'Edit(./**)'], deny: ['Read(./.env)'] }, sandbox: { network: { allowedDomains: ['example.com'] } } };
-    const s = mergeSettings(existing);
+    const s = mergeSettings(existing, 'linux');
     expect(s.model).toBe('opus');
-    expect(s.permissions.allow).toEqual(['Bash(npm test)', 'Edit(./**)', 'Bash']);
+    expect(s.permissions.allow).toEqual(['Bash(npm test)', 'Edit(./**)', 'Edit(/**)', 'Bash']);
     expect(s.permissions.deny[0]).toBe('Read(./.env)');
     expect(s.permissions.deny.filter((r) => r === 'Edit(./.claude/**)')).toHaveLength(1);
     expect(s.sandbox.network.allowedDomains).toEqual(['example.com']);
-    expect(mergeSettings(s)).toEqual(s); // idempotent
+    expect(mergeSettings(s, 'linux')).toEqual(s); // idempotent
   });
   it('forces the confinement flags on even if the user had them off', () => {
     const s = mergeSettings({ permissions: { defaultMode: 'auto', blockReadsOutsideWorkingDirectories: false }, sandbox: { enabled: false, allowUnsandboxedCommands: true } });
@@ -30,9 +30,18 @@ describe('mergeSettings', () => {
     expect(s.permissions.defaultMode).toBe('dontAsk');
     expect(s.sandbox).toMatchObject({ enabled: true, allowUnsandboxedCommands: false });
   });
+  it('also gives the edit rules in the project-root form, so cd-ing into .claude-team does not lose them', () => {
+    const s = mergeSettings({}, 'darwin');
+    expect(s.permissions.allow).toContain('Edit(/**)');
+    expect(s.permissions.deny).toEqual(expect.arrayContaining(['Edit(/.claude/**)', 'Edit(/.claude-team/config.json)']));
+  });
+  it('turns auto-memory off so agents keep nothing in the home folder', () => {
+    expect(mergeSettings({}, 'linux').autoMemoryEnabled).toBe(false);
+    expect(mergeSettings({ autoMemoryEnabled: true }, 'darwin').autoMemoryEnabled).toBe(false);
+  });
   it('drops an allow rule that would reopen what the policy denies', () => {
-    const s = mergeSettings({ permissions: { allow: ['Edit(./.claude/**)', 'Edit(./.claude-team/config.json)', 'Edit(./src/**)'] } });
-    expect(s.permissions.allow).toEqual(['Edit(./src/**)', 'Edit(./**)', 'Bash']);
+    const s = mergeSettings({ permissions: { allow: ['Edit(./.claude/**)', 'Edit(./.claude-team/config.json)', 'Edit(./src/**)'] } }, 'linux');
+    expect(s.permissions.allow).toEqual(['Edit(./src/**)', 'Edit(./**)', 'Edit(/**)', 'Bash']);
   });
   it('allows Bash outright where the OS sandbox exists, and refuses to run unsandboxed', () => {
     for (const platform of ['darwin', 'linux']) {
@@ -162,11 +171,11 @@ describe('applyProjectPermissions — CLI access', () => {
     const wrapper = '.claude-team/bin/' + (process.platform === 'win32' ? 'claude-team.cmd' : 'claude-team');
     expect(await fs.pathExists(wrapper)).toBe(true);
     if (process.platform !== 'win32') expect((await fs.stat(wrapper)).mode & 0o111).not.toBe(0);
-    const local = await fs.readJson('.claude/settings.local.json');
-    if (process.platform !== 'win32') expect(local.sandbox.filesystem.allowRead.length).toBeGreaterThan(0);
-    const before = await fs.readFile('.claude/settings.local.json', 'utf8');
+    const grantFile = '.claude/settings.local.json'; // POSIX only: native Windows has no sandbox, so no read grant
+    if (process.platform !== 'win32') expect((await fs.readJson(grantFile)).sandbox.filesystem.allowRead.length).toBeGreaterThan(0);
+    const before = process.platform === 'win32' ? null : await fs.readFile(grantFile, 'utf8');
     expect(await applyProjectPermissions()).toMatchObject({ changed: false });
-    expect(await fs.readFile('.claude/settings.local.json', 'utf8')).toBe(before);
+    if (before !== null) expect(await fs.readFile(grantFile, 'utf8')).toBe(before);
   });
   it('keeps the user\'s own settings.local.json keys and read grants', async () => {
     await fs.outputJson('.claude/settings.local.json', { env: { X: '1' }, sandbox: { filesystem: { allowRead: ['/my/own/dir'] } } });

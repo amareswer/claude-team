@@ -190,7 +190,9 @@ describe('applyWorktreePermissions', () => {
       expect(s.env).toEqual({ X: '1' });
       expect(s.permissions.additionalDirectories).toEqual(w.additionalDirectories);
       expect(s.sandbox.filesystem.allowWrite).toEqual(['/mine', ...w.allowWrite]);
-      expect(s.permissions.deny).toEqual(w.deny); // config.json stays off limits via the link
+      // Root-relative edit rules: an agent that cd-s into .claude-team must still be able to write its worktree.
+      expect(s.permissions.allow).toEqual(expect.arrayContaining([...w.allow, 'Edit(/**)']));
+      expect(s.permissions.deny).toEqual(expect.arrayContaining([...w.deny, 'Edit(/.claude/**)', 'Edit(/.claude-team/config.json)'])); // config.json stays off limits via the link
       const before = JSON.stringify(s);
       await applyWorktreePermissions(dir, root);
       expect(JSON.stringify(await fs.readJson(path.join(dir, '.claude/settings.local.json')))).toBe(before);

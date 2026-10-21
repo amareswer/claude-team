@@ -29,6 +29,8 @@ describe('claude-team start', () => {
   it('puts the project launcher on PATH and the npm cache in the project, per platform', () => {
     expect(launchCommandFor('darwin')).toContain('PATH="$PWD/.claude-team/bin:$PATH"');
     expect(launchCommandFor('darwin')).toContain('npm_config_cache="$PWD/.claude-team/npm-cache"');
+    expect(launchCommandFor('darwin')).toContain('CLAUDE_CODE_DISABLE_AUTO_MEMORY=1');
+    expect(launchCommandFor('win32')).toContain('CLAUDE_CODE_DISABLE_AUTO_MEMORY=1');
     expect(launchCommandFor('win32')).toContain('.claude-team\\bin;%PATH%');
     expect(launchCommandFor('win32')).toContain('npm_config_cache=%CD%\\.claude-team\\npm-cache');
   });
