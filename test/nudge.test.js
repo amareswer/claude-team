@@ -96,3 +96,20 @@ describe('no nudging of a worker that is only waiting', () => {
     });
   });
 });
+
+describe('an agent that keeps finding nothing new', () => {
+  it('is nudged a few times, then left alone until a team file changes', async () => {
+    await withTempCwd(async () => {
+      await fs.outputJson('.claude-team/config.json', { ...minimalConfig(), agents: [{ name: 'lead', isLeadership: true }] });
+      await fs.outputJson('.claude-team/tasks/master.json', { tasks: [] });
+      const s = fakeSession({ name: 'lead', lastOutputAt: 0, lastInputAt: 0, lastNudgeAt: 0, pollIntervalMs: 1000 });
+      let t = Date.now();
+      for (let i = 0; i < 12; i++) { await maybeNudge(s, t); t += 3_600_000; }
+      const nudges = s.writes.filter((w) => w.d === NUDGE_TEXT).length;
+      expect(nudges).toBeLessThanOrEqual(6); // SPIN_THRESHOLD, then silence even hours later
+      await fs.outputJson('.claude-team/tasks/master.json', { tasks: [{ id: 'x', status: 'assigned', assignedTo: 'lead' }] });
+      await maybeNudge(s, t + 3_600_000); // a file changed: it is told again
+      expect(s.writes.filter((w) => w.d === NUDGE_TEXT).length).toBe(nudges + 1);
+    });
+  });
+});
