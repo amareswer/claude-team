@@ -75,6 +75,7 @@ Then open one terminal per agent, run the launch command `claude-team start` pri
 | `claude-team review request <id>` | (agents/orchestrator) put a finished task in the queue; sets its status to `review`. |
 | `claude-team review repair [--dry-run]` | Finish review decisions an interruption left half-applied. |
 | `claude-team review approve <id>` / `reject <id> -m "…"` | (human, interactive terminal only) accept → task `done`; or send back → task `assigned` and your note lands in the assignee's inbox as a `review_rejected` message. |
+| `claude-team review codex <id>` | Optional second opinion: sends the task's diff, summary and criteria to the `codex` CLI (read-only, ephemeral) and saves the answer as `.claude-team/reviews/<id>-codex.md`, which `review show` lists under peer reviews. Never approves. Needs `codex` installed; the diff leaves your machine, so skip it for private code. |
 | `claude-team office` | Live visual office view of the team in your browser (`--port` to change port, `--no-open` to skip auto-opening a tab). The printed URL carries a per-run access key; the server also validates Host/Origin on every request and WebSocket, so other web pages can't drive your terminals. |
 | `claude-team add` | Add a new worker agent to an existing team |
 | `claude-team remove` | Remove an agent from the team (deletes its instructions, memory doc, and task files) |
